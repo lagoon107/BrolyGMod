@@ -55,6 +55,12 @@ local function DrawBeam(ent)
 	local flick = math.Rand(0.85, 1.1)
 	local scroll = -CurTime() * 6
 
+	-- a fat soft wave of ki around a white-hot core
+	render.SetMaterial(MAT_GLOW)
+	render.DrawBeam(a, b, 520 * flick, 0, 1, Color(KI.r, KI.g, KI.b, 150))
+	render.DrawBeam(a, b, 300 * flick, 0, 1, Color(190, 255, 150, 200))
+	render.DrawBeam(a, b, 120 * flick, 0, 1, Color(255, 255, 255, 255))
+
 	render.SetMaterial(MAT_LASER)
 	render.DrawBeam(a, b, 260 * flick, scroll, scroll + len / 250, Color(KI.r, KI.g, KI.b, 110))
 	render.DrawBeam(a, b, 140 * flick, scroll, scroll + len / 250, Color(170, 255, 130, 230))
@@ -87,7 +93,9 @@ local function DrawBeam(ent)
 end
 
 hook.Add("Think", "BrolyFX_Aura", function()
-	local eye = EyePos()
+	local ply = LocalPlayer()
+	if not IsValid(ply) then return end
+	local eye = ply:EyePos() -- (global EyePos() is only valid inside render hooks)
 	for ent, st in pairs(state) do
 		if not IsValid(ent) then
 			if st.emitter then st.emitter:Finish() end
@@ -95,7 +103,6 @@ hook.Add("Think", "BrolyFX_Aura", function()
 		end
 	end
 
-	-- (ents.FindByClass misses DrGBase nextbots on the client; the boss flag is reliable)
 	for _, ent in ipairs(ents.GetAll()) do
 		if not ent.IsBrolyBoss then continue end
 		if ent:IsDormant() or ent:GetPos():DistToSqr(eye) > AURA_DIST * AURA_DIST then continue end
