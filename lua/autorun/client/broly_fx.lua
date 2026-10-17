@@ -48,10 +48,12 @@ local ARC_BONES = {
 }
 
 -- a jagged lightning bolt between two points, kept for a few frames
-local function NewArc(ent, powered)
+local function NewArc(ent, powered, reach)
 	local a = BonePos(ent, ARC_BONES[math.random(#ARC_BONES)]) + VectorRand() * 10
 	local b
-	if powered and math.random() < 0.4 then
+	if reach then
+		b = ent:GetPos() + VectorRand() * Vector(reach, reach, 0) -- lashes the ground far out
+	elseif powered and math.random() < 0.4 then
 		b = ent:GetPos() + VectorRand() * Vector(140, 140, 0) -- strikes the ground around him
 	else
 		b = BonePos(ent, ARC_BONES[math.random(#ARC_BONES)]) + VectorRand() * 25
@@ -180,12 +182,66 @@ hook.Add("Think", "BrolyFX_Aura", function()
 			end
 		end
 
+		-- doomsday: a violent purple inferno - a towering pillar of flame, energy ripping outward, the
+		-- ground boiling around him
+		if doomed and now > (st.nextDoom or 0) then
+			st.nextDoom = now + 0.016
+			local feet = ent:GetPos()
+			for i = 1, 7 do -- the pillar
+				local p = em:Add("sprites/light_glow02_add", feet + Vector(math.Rand(-150, 150), math.Rand(-150, 150), math.Rand(0, 220)))
+				if p then
+					p:SetVelocity(Vector(math.Rand(-120, 120), math.Rand(-120, 120), math.Rand(700, 1600)))
+					p:SetDieTime(math.Rand(0.6, 1.2))
+					p:SetStartAlpha(230)
+					p:SetEndAlpha(0)
+					p:SetStartSize(math.Rand(120, 260))
+					p:SetEndSize(math.Rand(30, 70))
+					p:SetColor(i == 1 and DOOM_HOT.r or DOOM.r, i == 1 and DOOM_HOT.g or DOOM.g, i == 1 and DOOM_HOT.b or DOOM.b)
+					p:SetAirResistance(30)
+				end
+			end
+			for i = 1, 5 do -- energy tearing outward
+				local dir = VectorRand()
+				dir.z = math.abs(dir.z) * 0.6
+				local p = em:Add("effects/spark", center + dir * 30)
+				if p then
+					p:SetVelocity(dir:GetNormalized() * math.Rand(900, 1800))
+					p:SetDieTime(math.Rand(0.2, 0.4))
+					p:SetStartAlpha(255)
+					p:SetEndAlpha(0)
+					p:SetStartSize(math.Rand(6, 12))
+					p:SetEndSize(0)
+					p:SetStartLength(math.Rand(120, 260))
+					p:SetEndLength(0)
+					p:SetColor(DOOM_HOT.r, DOOM_HOT.g, DOOM_HOT.b)
+				end
+			end
+			if math.random() < 0.5 then -- dust and rubble blasted off the ground
+				local p = em:Add("particle/particle_smokegrenade", feet + VectorRand() * Vector(120, 120, 0))
+				if p then
+					local out = (p:GetPos() - feet):GetNormalized()
+					p:SetVelocity(out * math.Rand(500, 900) + Vector(0, 0, math.Rand(40, 200)))
+					p:SetDieTime(math.Rand(0.8, 1.4))
+					p:SetStartAlpha(90)
+					p:SetEndAlpha(0)
+					p:SetStartSize(30)
+					p:SetEndSize(math.Rand(140, 220))
+					p:SetColor(120, 100, 130)
+					p:SetAirResistance(150)
+				end
+			end
+			if math.random() < 0.1 then util.ScreenShake(feet, 6, 30, 0.3, 1500) end
+		end
+
 		-- lightning
 		for i = #st.arcs, 1, -1 do
 			if st.arcs[i].die < now then table.remove(st.arcs, i) end
 		end
 		local chance = math.min(1, (powered and 0.6 or 0.12) * (1 + rage))
 		if math.random() < chance then st.arcs[#st.arcs + 1] = NewArc(ent, powered) end
+		if doomed then -- big bolts lashing the ground far around him
+			for i = 1, 2 do st.arcs[#st.arcs + 1] = NewArc(ent, true, 450) end
+		end
 
 		-- mouth blast: debris and embers boiling off the beam and its impact point
 		if ent:GetNW2Float("BrolyBeamUntil", 0) > now then
@@ -273,6 +329,22 @@ hook.Add("PostDrawTranslucentRenderables", "BrolyFX_Draw", function(depth, skybo
 		local flick = math.Rand(0.9, 1.1)
 		local size = (powered and 230 or 150) * flick * (1 + rage * 0.5)
 		render.DrawSprite(ent:WorldSpaceCenter(), size, size * 1.4, Color(KI.r, KI.g, KI.b, powered and 70 or 35))
+		if IsDoomed(ent) then -- a towering, throbbing purple flare around the whole pillar
+			local throb = 1 + 0.25 * math.sin(CurTime() * 18) + math.Rand(-0.08, 0.08)
+			local mid = ent:GetPos() + Vector(0, 0, 160)
+			for k = 1, 3 do -- stacked so it reads even against a bright sky
+				render.DrawSprite(mid + Vector(0, 0, 120), 900 * throb, 1700 * throb, Color(DOOM.r, DOOM.g, DOOM.b, 255))
+			end
+			render.DrawSprite(ent:WorldSpaceCenter(), 450 * throb, 650 * throb, Color(DOOM_HOT.r, DOOM_HOT.g, DOOM_HOT.b, 255))
+			-- shockwave rings pulsing out along the ground
+			render.SetMaterial(MAT_RING)
+			for k = 0, 2 do
+				local t = (CurTime() * 1.6 + k / 3) % 1
+				local r = 100 + t * 1100
+				render.DrawQuadEasy(ent:GetPos() + Vector(0, 0, 6), Vector(0, 0, 1), r, r, Color(DOOM.r, DOOM.g, DOOM.b, 255 * (1 - t)), 0)
+			end
+			render.SetMaterial(MAT_GLOW)
+		end
 
 		if ent:GetNW2Float("BrolyBeamUntil", 0) > CurTime() then DrawBeam(ent) end
 
