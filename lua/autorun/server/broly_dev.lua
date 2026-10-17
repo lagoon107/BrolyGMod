@@ -19,6 +19,17 @@ concommand.Add("broly_spawn", function(ply)
 	print("[Broly] spawned", broly, broly:GetModel(), "seq:", broly:GetSequenceName(broly:GetSequence()))
 end)
 
+-- broly_ability <leap|slam|barrage|grab>: every Broly uses that ability next (ignores range/cooldown)
+concommand.Add("broly_ability", function(ply, _, args)
+	if IsValid(ply) and not ply:IsAdmin() then return end
+	local name = args[1]
+	for _, broly in ipairs(ents.FindByClass("npc_broly")) do
+		if not broly.BrolyAbilities[name] then print("[Broly] unknown ability", name) return end
+		broly._brolyForce = name
+		print("[Broly] forcing ability", name, "on", broly)
+	end
+end, function(cmd) return {cmd .. " leap", cmd .. " slam", cmd .. " barrage", cmd .. " grab"} end)
+
 -- broly_hurt [amount]: damages every Broly as if the calling player hit him
 concommand.Add("broly_hurt", function(ply, _, args)
 	if IsValid(ply) and not ply:IsAdmin() then return end
