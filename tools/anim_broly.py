@@ -109,7 +109,8 @@ def lerp_spec(a, b, t):
             va, vb = sa.get("aim", sb.get("aim")), sb.get("aim", sa.get("aim"))
             o["aim"] = norm([va[k] + (vb[k] - va[k]) * t for k in range(3)])
         if "rot" in sa or "rot" in sb:
-            ra, rb = sa.get("rot", (sb.get("rot")[0], 0)), sb.get("rot", (sa.get("rot")[0], 0))
+            ra = sa["rot"] if "rot" in sa else (sb["rot"][0], 0)
+            rb = sb["rot"] if "rot" in sb else (sa["rot"][0], 0)
             o["rot"] = (ra[0], ra[1] + (rb[1] - ra[1]) * t)  # axis taken from a; keys keep axes consistent
         if "curl" in sa or "curl" in sb:
             ca, cb = sa.get("curl", 0), sb.get("curl", 0)
@@ -213,9 +214,50 @@ THROW_FOLLOW = merge(THROW,
      "Spine": {"rot": (Z, 35)}})
 
 
+# Mouth blast: arch back gathering power, then thrust the head forward and unleash the wave
+ROAR_PREP = merge(GUARD,
+    {"R_UpperArm": {"aim": [-0.55, 0.35, -0.75]}, "R_Forearm": {"aim": [-0.40, -0.30, -0.85]},
+     "L_UpperArm": {"aim": [0.55, 0.35, -0.75]}, "L_Forearm": {"aim": [0.40, -0.30, -0.85]},
+     "Spine2": {"rot": (X, -14)}, "Head1": {"rot": (X, -18)}},
+    fingers("R", -85), fingers("L", -85))
+
+ROAR_FIRE = merge(ROAR_PREP,
+    {"R_UpperArm": {"aim": [-0.75, 0.40, -0.50]}, "R_Forearm": {"aim": [-0.60, -0.10, -0.80]},
+     "L_UpperArm": {"aim": [0.75, 0.40, -0.50]}, "L_Forearm": {"aim": [0.60, -0.10, -0.80]},
+     "Spine2": {"rot": (X, 15)}, "Head1": {"rot": (X, 8)}})
+
+# Nova: hunched double flex, roaring, then arms thrown wide as the dome detonates
+FLEX = merge(GUARD,
+    {"R_UpperArm": {"aim": [-0.85, 0.10, -0.50]}, "R_Forearm": {"aim": [0.30, -0.40, 0.85]},
+     "L_UpperArm": {"aim": [0.85, 0.10, -0.50]}, "L_Forearm": {"aim": [-0.30, -0.40, 0.85]},
+     "Spine2": {"rot": (X, 12)}, "Head1": {"rot": (X, -12)}},
+    fingers("R", -90), fingers("L", -90))
+
+BURST = merge(FLEX,
+    {"R_UpperArm": {"aim": [-0.90, 0.10, 0.40]}, "R_Forearm": {"aim": [-0.95, 0.00, 0.30]},
+     "L_UpperArm": {"aim": [0.90, 0.10, 0.40]}, "L_Forearm": {"aim": [0.95, 0.00, 0.30]},
+     "Spine2": {"rot": (X, -12)}, "Head1": {"rot": (X, -22)}},
+    fingers("R", -10, 0), fingers("L", -10, 0))
+
+# Hammer: both fists raised overhead, then a double axe-handle smash straight down
+RAISE = merge(GUARD,
+    {"R_UpperArm": {"aim": [-0.15, -0.20, 0.97]}, "R_Forearm": {"aim": [0.15, 0.25, 0.95]},
+     "L_UpperArm": {"aim": [0.15, -0.20, 0.97]}, "L_Forearm": {"aim": [-0.15, 0.25, 0.95]},
+     "Spine2": {"rot": (X, -12)}, "Head1": {"rot": (X, 0)}},
+    fingers("R", -90), fingers("L", -90))
+
+SMASH = merge(RAISE,
+    {"R_UpperArm": {"aim": [-0.10, -0.85, -0.50]}, "R_Forearm": {"aim": [0.15, -0.60, -0.78]},
+     "L_UpperArm": {"aim": [0.10, -0.85, -0.50]}, "L_Forearm": {"aim": [-0.15, -0.60, -0.78]},
+     "Spine2": {"rot": (X, 32)}, "Head1": {"rot": (X, 10)}})
+
+
 GRAB_HIT = 0.40       # seconds into broly_grab when the hand closes
 STRIKE_HIT = 0.34     # seconds into broly_strike when the fist connects
 ERASER_RELEASE = 1.17 # seconds into broly_eraser when the ball leaves the hand
+BEAM_START, BEAM_END = 0.70, 2.30   # broly_mouthblast firing window
+NOVA_BURST = 1.85     # broly_nova: arms thrown wide as the dome explodes
+HAMMER_HIT = 0.42     # broly_hammer: fists come down
 
 
 def main():
@@ -246,7 +288,27 @@ def main():
     eraser = render(skel, [(0.0, GUARD), (0.25, CHARGE), (1.1, CHARGE), (ERASER_RELEASE + 0.03, THROW),
                            (1.4, THROW_FOLLOW), (1.8, GUARD)], 1.8, charge_shake)
     skel.write(os.path.join(out, "broly_eraser.smd"), eraser)
-    print("ANIMS OK", len(grab), len(strike), len(eraser))
+
+    def tremble(t0, t1, amp):
+        def f(t):
+            if not t0 < t < t1:
+                return {}
+            a = min(1.0, (t - t0) / 0.2) * amp
+            return {"Spine2": {"rot": (X, a * math.sin(t * 63))}, "Head1": {"rot": (X, a * 1.5 * math.sin(t * 77 + 2))}}
+        return f
+
+    mouth = render(skel, [(0.0, GUARD), (0.45, ROAR_PREP), (BEAM_START - 0.1, ROAR_PREP), (BEAM_START + 0.08, ROAR_FIRE),
+                          (BEAM_END, ROAR_FIRE), (2.8, GUARD)], 2.8, tremble(0.2, BEAM_END, 3.0))
+    skel.write(os.path.join(out, "broly_mouthblast.smd"), mouth)
+
+    nova = render(skel, [(0.0, GUARD), (0.35, FLEX), (NOVA_BURST - 0.08, FLEX), (NOVA_BURST + 0.08, BURST),
+                         (2.3, BURST), (2.8, GUARD)], 2.8, tremble(0.3, NOVA_BURST, 4.0))
+    skel.write(os.path.join(out, "broly_nova.smd"), nova)
+
+    hammer = render(skel, [(0.0, GUARD), (0.15, RAISE), (HAMMER_HIT - 0.12, RAISE), (HAMMER_HIT, SMASH),
+                           (0.75, SMASH), (1.1, GUARD)], 1.1)
+    skel.write(os.path.join(out, "broly_hammer.smd"), hammer)
+    print("ANIMS OK", len(grab), len(strike), len(eraser), len(mouth), len(nova), len(hammer))
 
 
 if __name__ == "__main__":

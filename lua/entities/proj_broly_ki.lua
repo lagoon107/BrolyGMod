@@ -9,7 +9,7 @@ ENT.ModelScale = 0.6
 ENT.Gravity = false
 ENT.OnContactDelete = 0
 
-ENT.Damage = 15
+ENT.Damage = 150
 ENT.BlastRadius = 90
 ENT.Lifetime = 5
 

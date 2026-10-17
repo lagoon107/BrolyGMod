@@ -60,17 +60,17 @@ ENT.OnDeathSounds = {"Broly.DeathRoar"}
 ENT.BrolyAttacks = {
 	jab_left = {
 		seq = "range_fists_l", gesture = true, rate = 1, hit = 0.25,
-		damage = 25, range = 90, angle = 70, force = Vector(300, 0, 50), recover = 0.3,
+		damage = 500, range = 90, angle = 70, force = Vector(500, 0, 100), recover = 0.3,
 		hand = "ValveBiped.Bip01_L_Hand", impact = 1, shake = {6, 40, 0.3, 500}
 	},
 	jab_right = {
 		seq = "range_fists_r", gesture = true, rate = 1, hit = 0.25,
-		damage = 25, range = 90, angle = 70, force = Vector(300, 0, 50), recover = 0.3,
+		damage = 500, range = 90, angle = 70, force = Vector(500, 0, 100), recover = 0.3,
 		hand = "ValveBiped.Bip01_R_Hand", impact = 1, shake = {6, 40, 0.3, 500}
 	},
 	heavy = {
 		seq = "seq_meleeattack01", rate = 0.8, hit = 0.45,
-		damage = 60, range = 110, angle = 90, force = Vector(450, 0, 200), recover = 0.2,
+		damage = 900, range = 110, angle = 90, force = Vector(800, 0, 300), recover = 0.2,
 		hand = "ValveBiped.Bip01_R_Hand", impact = 2.2, shake = {20, 60, 0.8, 900}
 	}
 }
@@ -78,10 +78,13 @@ ENT.BrolyAttacks = {
 -- Abilities --
 -- cooldown (s), distance window to the enemy, weight for the random pick
 ENT.BrolyAbilities = {
-	leap    = {fn = "AbilityLeap",    cooldown = 3.5, min = 1100, max = 4500, weight = 6},
+	leap    = {fn = "AbilityLeap",    cooldown = 3.5, min = 1100, max = 4500, weight = 6, noSight = true},
 	slam    = {fn = "AbilitySlam",    cooldown = 8,   min = 250,  max = 900,  weight = 4},
 	barrage = {fn = "AbilityBarrage", cooldown = 11,  min = 500,  max = 2800, weight = 3},
 	eraser  = {fn = "AbilityEraser",  cooldown = 14,  min = 450,  max = 3500, weight = 4},
+	mouthblast = {fn = "AbilityMouthBlast", cooldown = 16, min = 350, max = 3000, weight = 3},
+	nova    = {fn = "AbilityNova",    cooldown = 20,  min = 0,    max = 700,  weight = 6, cond = "BrolyCrowded"},
+	ambush  = {fn = "AbilityAmbush",  cooldown = 10,  weight = 7, cond = "BrolyAmbushTarget", noSight = true},
 	grab    = {fn = "AbilityGrab",    cooldown = 12,  min = 0,    max = 110,  weight = 0}, -- picked from melee, see OnMeleeAttack
 }
 ENT.GrabChance = 0.4
@@ -97,6 +100,7 @@ if SERVER then
 		self._brolyPowerUntil = 0
 		self._brolyNextStep = 0
 		self._brolyStepFoot = false
+		self._brolyAttackers = {}
 		self:CallOnRemove("BrolyReleaseGrab", function(self) self:BrolyGrabRelease(false) end)
 		-- announce himself
 		self:Timer(0.3, function(self)
@@ -153,7 +157,11 @@ if SERVER then
 
 	-- Damage resistance: small arms barely scratch him, explosives are the way.
 	function ENT:OnTakeDamage(dmg)
-		self:SpotEntity(dmg:GetAttacker())
+		local attacker = dmg:GetAttacker()
+		self:SpotEntity(attacker)
+		if IsValid(attacker) and attacker ~= self and (attacker:IsNPC() or attacker:IsPlayer() or attacker:IsNextBot()) then
+			self._brolyAttackers[attacker] = CurTime() -- remembered for the ambush
+		end
 		if dmg:IsDamageType(DMG_FALL) or dmg:IsDamageType(DMG_CRUSH) or dmg:IsDamageType(DMG_PHYSGUN) then return true end
 		local inflictor = dmg:GetInflictor()
 		if IsValid(inflictor) and inflictor:GetClass():StartWith("prop_physics") then return true end
@@ -209,7 +217,7 @@ if SERVER then
 				self:Attack({
 					damage = atk.damage, range = atk.range, angle = atk.angle,
 					type = DMG_CLUB, force = atk.force, push = true,
-					viewpunch = Angle(atk.damage * 0.5, math.random(-10, 10), 0)
+					viewpunch = Angle(math.min(atk.damage * 0.5, 25), math.random(-10, 10), 0)
 				}, function(self, hit)
 					self:EmitSound(#hit > 0 and "Flesh.ImpactHard" or "WeaponFrag.Throw", 80, math.random(80, 95))
 					for _, ent in ipairs(hit) do self:BrolyImpact(atk, ent) end
@@ -243,7 +251,13 @@ if SERVER then
 		return CurTime() >= (self._brolyCooldowns[name] or 0)
 	end
 
+	local DebugCvar = CreateConVar("broly_debug", "0", FCVAR_ARCHIVE, "Print Broly ability decisions to the console")
+	function ENT:BrolyDebug(...)
+		if DebugCvar:GetBool() then print("[Broly]", self, ...) end
+	end
+
 	function ENT:BrolyUseAbility(name, enemy)
+		self:BrolyDebug("ability", name, "on", enemy, "dist", math.Round(self:GetPos():Distance(enemy:GetPos())))
 		self._brolyCooldowns[name] = CurTime() + self.BrolyAbilities[name].cooldown
 		self[self.BrolyAbilities[name].fn](self, enemy)
 		self._brolyNextAbility = CurTime() + self.AbilityGap
@@ -267,9 +281,10 @@ if SERVER then
 		local pool, total = {}, 0
 		for name, ab in pairs(self.BrolyAbilities) do
 			if ab.weight <= 0 or not self:BrolyAbilityReady(name) then continue end
-			local inRange = dist >= ab.min and dist <= ab.max
+			local inRange = (not ab.min or dist >= ab.min) and (not ab.max or dist <= ab.max)
 			if name == "leap" and above and dist > 200 then inRange = true end
-			if name ~= "leap" and not visible then inRange = false end
+			if not ab.noSight and not visible then inRange = false end
+			if inRange and ab.cond and not self[ab.cond](self, enemy) then inRange = false end
 			if inRange then
 				pool[#pool + 1] = name
 				total = total + ab.weight
@@ -394,7 +409,7 @@ if SERVER then
 		self:FaceTowards(enemy)
 		self:PlaySequenceAndWait("jump_land", 1.4) -- quick crouch
 		if not self:BrolyLeapTo(target, 1.1, enemy) then return end
-		self:BrolyShockwave(self:GetPos(), {radius = 320, damage = 25, launch = 450, power = 0.8, dome = 260})
+		self:BrolyShockwave(self:GetPos(), {radius = 320, damage = 500, launch = 500, power = 0.8, dome = 260})
 		self:BrolyPause(0.2)
 	end
 
@@ -406,7 +421,7 @@ if SERVER then
 		self:PlaySequenceAndWait("jump_land", 0.5) -- slow, readable windup
 		local target = enemy:GetPos() + enemy:GetVelocity() * 0.3
 		if not self:BrolyLeapTo(target, 1.02, enemy) then return end
-		self:BrolyShockwave(self:GetPos(), {radius = 480, damage = 65, launch = 700, power = 1.2, dome = 440})
+		self:BrolyShockwave(self:GetPos(), {radius = 480, damage = 900, launch = 800, power = 1.2, dome = 440})
 		self:PlaySequenceAndWait("jump_land", 0.7) -- recovery crouch
 	end
 
@@ -436,6 +451,244 @@ if SERVER then
 			self:BrolyFireKi(left and "ValveBiped.Bip01_L_Hand" or "ValveBiped.Bip01_R_Hand", enemy)
 			self:BrolyPause(0.12, enemy)
 		end
+		self:BrolyPause(0.5)
+	end
+
+	------------------------------------------------------------------ damage helpers
+
+	-- Trace filter that only stops on the world and props (characters and projectiles are ignored).
+	-- Note: MASK_SOLID_BRUSHONLY passes through gm_flatgrass's ground, so use MASK_SOLID with this.
+	local function WorldOnly(e)
+		return not (e:IsNPC() or e:IsPlayer() or e:IsNextBot() or e.IsDrGProjectile)
+	end
+
+	-- Anything Broly is allowed to hurt (never himself, other Brolys, or projectiles).
+	function ENT:BrolyCanHurt(ent)
+		if not IsValid(ent) or ent == self or ent.IsBrolyBoss or ent.IsDrGProjectile then return false end
+		if ent:IsPlayer() then return ent:Alive() end
+		if ent:IsNPC() or ent:IsNextBot() then return ent:Health() > 0 end
+		local phys = ent:GetPhysicsObject()
+		return IsValid(phys) and ent:GetMoveType() == MOVETYPE_VPHYSICS
+	end
+
+	function ENT:BrolyDamage(ent, amount, type, force, pos)
+		local dmg = DamageInfo()
+		dmg:SetDamage(amount)
+		dmg:SetAttacker(self)
+		dmg:SetInflictor(self)
+		dmg:SetDamageType(type or DMG_CLUB)
+		dmg:SetDamageForce(force or vector_origin)
+		dmg:SetDamagePosition(pos or ent:WorldSpaceCenter())
+		ent:TakeDamageInfo(dmg)
+	end
+
+	function ENT:BrolyPush(ent, vel)
+		if ent:IsPlayer() or ent:IsNPC() then
+			ent:SetVelocity(vel)
+		elseif not ent:IsNextBot() then
+			local phys = ent:GetPhysicsObject()
+			if IsValid(phys) then phys:ApplyForceCenter(vel * phys:GetMass()) end
+		end
+	end
+
+	-- Enemies (players/NPCs/nextbots he hates) within radius of him.
+	function ENT:BrolyEnemiesNear(radius)
+		local list = {}
+		for _, ent in ipairs(ents.FindInSphere(self:GetPos(), radius)) do
+			if (ent:IsPlayer() or ent:IsNPC() or ent:IsNextBot()) and self:BrolyCanHurt(ent)
+				and self:GetRelationship(ent) == D_HT then
+				list[#list + 1] = ent
+			end
+		end
+		return list
+	end
+
+	------------------------------------------------------------------ mouth blast
+
+	-- Throws his head back, then unleashes a huge wave of ki from his mouth that sweeps toward
+	-- the target, shredding everything along it and erupting where it hits.
+	ENT.BeamStart, ENT.BeamEnd = 0.70, 2.30 -- broly_mouthblast firing window (tools/anim_broly.py)
+	ENT.BeamRange = 3500
+	ENT.BeamRadius = 80
+	ENT.BeamDamage = 150    -- per 0.1 s to everything inside the beam
+	ENT.BeamBlastDamage = 300
+	ENT.BeamTurn = 1.4      -- how fast the beam sweeps toward the target
+
+	function ENT:BrolyMouthPos()
+		local att = self:GetAttachment(self:LookupAttachment("mouth"))
+		if att then return att.Pos end
+		return self:BrolyHandPos("ValveBiped.Bip01_Head1") + self:GetForward() * 8
+	end
+
+	function ENT:AbilityMouthBlast(enemy)
+		self:BrolyPowerFor(3.2)
+		self:EmitSound("Broly.KiCharge")
+		self:BrolyGesture("broly_mouthblast")
+		local start = CurTime()
+		while CurTime() - start < self.BeamStart do
+			if IsValid(enemy) then self:FaceTowards(enemy) end
+			self:YieldCoroutine(false)
+		end
+
+		self:BrolyDebug("mouthblast: firing")
+		self:EmitSound("Broly.Roar")
+		self:EmitSound("Broly.Blast")
+		local dir = IsValid(enemy) and (enemy:WorldSpaceCenter() - self:BrolyMouthPos()):GetNormalized() or self:GetForward()
+		self:SetNW2Float("BrolyBeamUntil", start + self.BeamEnd)
+		local nextTick, nextBoom = 0, 0
+		while CurTime() - start < self.BeamEnd do
+			if IsValid(enemy) then
+				self:FaceTowards(enemy)
+				local want = (enemy:WorldSpaceCenter() - self:BrolyMouthPos()):GetNormalized()
+				dir = LerpVector(math.Clamp(self.BeamTurn * FrameTime(), 0, 1), dir, want):GetNormalized()
+			end
+			local mouth = self:BrolyMouthPos()
+			local tr = util.TraceLine({start = mouth, endpos = mouth + dir * self.BeamRange, mask = MASK_SOLID, filter = WorldOnly})
+			self:SetNW2Vector("BrolyBeamEnd", tr.HitPos)
+
+			if CurTime() > nextTick then
+				nextTick = CurTime() + 0.1
+				local r = self.BeamRadius
+				for _, ent in ipairs(ents.FindAlongRay(mouth, tr.HitPos, Vector(-r, -r, -r), Vector(r, r, r))) do
+					if not self:BrolyCanHurt(ent) then continue end
+					self:BrolyDamage(ent, self.BeamDamage, DMG_ENERGYBEAM + DMG_DISSOLVE, dir * 30000)
+					self:BrolyPush(ent, dir * 300)
+				end
+			end
+			if tr.Hit and CurTime() > nextBoom then
+				nextBoom = CurTime() + 0.2
+				local fx = EffectData()
+				fx:SetOrigin(tr.HitPos)
+				fx:SetNormal(dir)
+				fx:SetScale(2.6)
+				util.Effect("broly_impact", fx, true, true)
+				util.Decal("Scorch", tr.HitPos - dir * 10, tr.HitPos + dir * 20)
+				util.ScreenShake(tr.HitPos, 18, 40, 0.4, 1400)
+				for _, ent in ipairs(ents.FindInSphere(tr.HitPos, 240)) do
+					if self:BrolyCanHurt(ent) then
+						self:BrolyDamage(ent, self.BeamBlastDamage, DMG_BLAST, dir * 20000, tr.HitPos)
+						self:BrolyPush(ent, (ent:WorldSpaceCenter() - tr.HitPos):GetNormalized() * 500 + Vector(0, 0, 200))
+					end
+				end
+				if CurTime() > (self._brolyBeamSound or 0) then
+					self._brolyBeamSound = CurTime() + 0.6
+					sound.Play("broly/blast3.wav", tr.HitPos, 110, math.random(85, 100), 1)
+				end
+			end
+			util.ScreenShake(mouth, 6, 30, 0.2, 900)
+			self:YieldCoroutine(false)
+		end
+		self:SetNW2Float("BrolyBeamUntil", 0)
+		self:BrolyDebug("mouthblast: done")
+		self:BrolyPause(0.4)
+	end
+
+	------------------------------------------------------------------ nova
+
+	-- Crowd control: a dome of violent energy erupts from him and doubles in size until it detonates.
+	ENT.NovaSpawnTime = 0.35 -- seconds into broly_nova when the dome appears
+
+	function ENT:BrolyCrowded()
+		return #self:BrolyEnemiesNear(700) >= 2
+	end
+
+	function ENT:AbilityNova(enemy)
+		self:BrolyPowerFor(3)
+		self:EmitSound("Broly.Roar")
+		self:EmitSound("Broly.KiCharge")
+		self:BrolyGesture("broly_nova")
+		local start = CurTime()
+		while CurTime() - start < self.NovaSpawnTime do self:YieldCoroutine(false) end
+		local nova = ents.Create("broly_nova")
+		if IsValid(nova) then
+			nova:SetOwner(self)
+			nova:SetPos(self:GetPos())
+			nova:Spawn()
+		end
+		while CurTime() - start < 2.6 do self:YieldCoroutine(false) end
+	end
+
+	------------------------------------------------------------------ ambush
+
+	-- Vanishes, reappears in the air behind whoever has been attacking him, and crashes down on them
+	-- with a double axe-handle smash.
+	ENT.AmbushHover = 0.28  -- seconds hanging in the air with fists raised before dropping (broly_hammer)
+	ENT.AmbushDamage = 2000
+
+	function ENT:BrolyAmbushTarget()
+		local best, bestT
+		for ent, t in pairs(self._brolyAttackers) do
+			if not self:BrolyCanHurt(ent) or CurTime() - t > 5 then
+				self._brolyAttackers[ent] = nil
+				continue
+			end
+			local d = self:GetPos():Distance(ent:GetPos())
+			if d > 200 and d < 4000 and (not best or t > bestT) then best, bestT = ent, t end
+		end
+		return best
+	end
+
+	function ENT:BrolyTeleportFX(pos, ghost)
+		local fx = EffectData()
+		fx:SetOrigin(pos)
+		fx:SetAngles(self:GetAngles())
+		if ghost then fx:SetEntity(self) end
+		util.Effect("broly_teleport", fx, true, true)
+	end
+
+	function ENT:AbilityAmbush(enemy)
+		local target = self:BrolyAmbushTarget() or enemy
+		if not IsValid(target) then return end
+		local back = -target:GetForward()
+		back.z = 0
+		if back:IsZero() then
+			back = self:GetPos() - target:GetPos()
+			back.z = 0
+		end
+		back:Normalize()
+
+		local mins, maxs = self:GetCollisionBounds()
+		local function clear(pos)
+			return not util.TraceHull({start = pos, endpos = pos, mins = mins, maxs = maxs, filter = self}).Hit
+		end
+		local dest = target:GetPos() + back * 90 + Vector(0, 0, 200)
+		if not clear(dest) then
+			dest = target:GetPos() + Vector(0, 0, target:OBBMaxs().z + 60)
+			if not clear(dest) then return end
+		end
+
+		-- vanish ... and reappear
+		self:BrolyTeleportFX(self:GetPos(), true)
+		self:EmitSound("Broly.KiShot", 90, 60)
+		self:SetPos(dest)
+		self:SetAngles(Angle(0, (target:GetPos() - dest):Angle().y, 0))
+		self:BrolyTeleportFX(dest, false)
+		self:BrolyPowerFor(2)
+		self:EmitSound("Broly.Grunt")
+		self:BrolyGesture("broly_hammer")
+
+		local start = CurTime()
+		while CurTime() - start < self.AmbushHover do
+			self:SetPos(dest)
+			self.loco:SetVelocity(vector_origin)
+			if IsValid(target) then self:FaceTowards(target) end
+			self:YieldCoroutine(false)
+		end
+		self.loco:SetVelocity(Vector(0, 0, -1800))
+		while not self:IsOnGround() and CurTime() - start < 1.5 do self:YieldCoroutine(false) end
+
+		local pos = self:GetPos()
+		if self:BrolyCanHurt(target) and target:GetPos():Distance(pos) < 230 then
+			local fx = EffectData()
+			fx:SetOrigin(target:WorldSpaceCenter())
+			fx:SetNormal(Vector(0, 0, -1))
+			fx:SetScale(3)
+			util.Effect("broly_impact", fx, true, true)
+			self:BrolyDamage(target, self.AmbushDamage, DMG_CLUB, Vector(0, 0, -60000))
+			self:BrolyPush(target, self:GetForward() * 300 + Vector(0, 0, 500))
+		end
+		self:BrolyShockwave(pos, {radius = 380, damage = 700, launch = 700, power = 1.4, dome = 330, hitAir = true})
+		BrolyHitStop(0.2, 0.2)
 		self:BrolyPause(0.5)
 	end
 
@@ -473,8 +726,8 @@ if SERVER then
 	ENT.GrabCloseTime = 0.40   -- seconds into "broly_grab" when the hand closes (tools/anim_broly.py GRAB_HIT)
 	ENT.GrabLiftTime = 1.60    -- length of "broly_grab"
 	ENT.StrikeHitTime = 0.34   -- seconds into "broly_strike" when the fist connects (STRIKE_HIT)
-	ENT.HoldDamage = 4         -- per squeeze tick while held
-	ENT.StrikeDamage = 70
+	ENT.HoldDamage = 100       -- per squeeze tick while held
+	ENT.StrikeDamage = 1500
 
 	function ENT:BrolyGrabStart(ent)
 		self._brolyGrab = {ent = ent, untilT = CurTime() + 2.5, nextHurt = CurTime() + 0.3}

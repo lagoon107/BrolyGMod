@@ -5,6 +5,8 @@ local KI = Color(140, 255, 90)
 local KI_HOT = Color(210, 255, 170)
 local MAT_GLOW = Material("sprites/light_glow02_add")
 local MAT_BEAM = Material("trails/electric")
+local MAT_LASER = Material("trails/laser")
+local MAT_RING = Material("effects/select_ring")
 local AURA_DIST = 4000
 
 local state = {} -- [ent] = {emitter, nextPuff, arcs = {}}
@@ -38,6 +40,52 @@ local function NewArc(ent, powered)
 	return {pts = pts, die = CurTime() + math.Rand(0.05, 0.14), width = math.Rand(2, powered and 7 or 4)}
 end
 
+-- mouth blast endpoints: his mouth attachment -> where the server says the beam hits
+local function BeamPoints(ent)
+	local att = ent:GetAttachment(ent:LookupAttachment("mouth"))
+	local a = att and att.Pos or BonePos(ent, "ValveBiped.Bip01_Head1")
+	return a, ent:GetNW2Vector("BrolyBeamEnd", a)
+end
+
+local function DrawBeam(ent)
+	local a, b = BeamPoints(ent)
+	local len = a:Distance(b)
+	if len < 1 then return end
+	local dir = (b - a):GetNormalized()
+	local flick = math.Rand(0.85, 1.1)
+	local scroll = -CurTime() * 6
+
+	render.SetMaterial(MAT_LASER)
+	render.DrawBeam(a, b, 260 * flick, scroll, scroll + len / 250, Color(KI.r, KI.g, KI.b, 110))
+	render.DrawBeam(a, b, 140 * flick, scroll, scroll + len / 250, Color(170, 255, 130, 230))
+	render.DrawBeam(a, b, 55 * flick, scroll * 2, scroll * 2 + len / 250, Color(255, 255, 255, 255))
+
+	-- rings racing down the beam
+	render.SetMaterial(MAT_RING)
+	for i = 0, math.floor(len / 300) do
+		local d = (CurTime() * 1800 + i * 300) % len
+		render.DrawQuadEasy(a + dir * d, -dir, 190, 190, Color(KI.r, KI.g, KI.b, 200), CurTime() * 300 + i * 40)
+	end
+
+	-- lightning wrapped around it
+	render.SetMaterial(MAT_BEAM)
+	for k = 1, 3 do
+		local pts = math.min(16, math.floor(len / 120) + 2)
+		render.StartBeam(pts)
+		for i = 0, pts - 1 do
+			local p = a + dir * (len * i / (pts - 1)) + VectorRand() * 70
+			render.AddBeam(p, math.Rand(5, 10), i / pts, KI_HOT)
+		end
+		render.EndBeam()
+	end
+
+	render.SetMaterial(MAT_GLOW)
+	render.DrawSprite(a, 280 * flick, 280 * flick, Color(KI.r, KI.g, KI.b, 255))
+	render.DrawSprite(a, 110, 110, Color(255, 255, 255, 255))
+	render.DrawSprite(b, 600 * flick, 600 * flick, Color(KI.r, KI.g, KI.b, 255))
+	render.DrawSprite(b, 250 * flick, 250 * flick, Color(255, 255, 255, 230))
+end
+
 hook.Add("Think", "BrolyFX_Aura", function()
 	local eye = EyePos()
 	for ent, st in pairs(state) do
@@ -47,7 +95,9 @@ hook.Add("Think", "BrolyFX_Aura", function()
 		end
 	end
 
-	for _, ent in ipairs(ents.FindByClass("npc_broly")) do
+	-- (ents.FindByClass misses DrGBase nextbots on the client; the boss flag is reliable)
+	for _, ent in ipairs(ents.GetAll()) do
+		if not ent.IsBrolyBoss then continue end
 		if ent:IsDormant() or ent:GetPos():DistToSqr(eye) > AURA_DIST * AURA_DIST then continue end
 		local st = state[ent]
 		if not st then
@@ -100,6 +150,52 @@ hook.Add("Think", "BrolyFX_Aura", function()
 		local chance = powered and 0.6 or 0.12
 		if math.random() < chance then st.arcs[#st.arcs + 1] = NewArc(ent, powered) end
 
+		-- mouth blast: debris and embers boiling off the beam and its impact point
+		if ent:GetNW2Float("BrolyBeamUntil", 0) > now then
+			local a, b = BeamPoints(ent)
+			local hit = em:Add("sprites/light_glow02_add", b)
+			if hit then
+				hit:SetVelocity(VectorRand() * 400)
+				hit:SetDieTime(math.Rand(0.3, 0.6))
+				hit:SetStartAlpha(255)
+				hit:SetEndAlpha(0)
+				hit:SetStartSize(math.Rand(30, 60))
+				hit:SetEndSize(0)
+				hit:SetColor(KI.r, KI.g, KI.b)
+				hit:SetAirResistance(100)
+			end
+			local smoke = em:Add("particle/particle_smokegrenade", b)
+			if smoke then
+				smoke:SetVelocity(VectorRand() * 200 + Vector(0, 0, 150))
+				smoke:SetDieTime(math.Rand(0.8, 1.4))
+				smoke:SetStartAlpha(90)
+				smoke:SetEndAlpha(0)
+				smoke:SetStartSize(40)
+				smoke:SetEndSize(math.Rand(120, 180))
+				smoke:SetColor(170, 165, 150)
+				smoke:SetAirResistance(80)
+			end
+			local along = em:Add("sprites/light_glow02_add", LerpVector(math.random(), a, b) + VectorRand() * 30)
+			if along then
+				along:SetVelocity(VectorRand() * 120)
+				along:SetDieTime(math.Rand(0.2, 0.4))
+				along:SetStartAlpha(200)
+				along:SetEndAlpha(0)
+				along:SetStartSize(math.Rand(20, 40))
+				along:SetEndSize(0)
+				along:SetColor(KI_HOT.r, KI_HOT.g, KI_HOT.b)
+			end
+			local bl = DynamicLight(ent:EntIndex() + 4096)
+			if bl then
+				bl.pos = b
+				bl.r, bl.g, bl.b = KI.r, KI.g, KI.b
+				bl.brightness = 6
+				bl.decay = 3000
+				bl.size = 700
+				bl.dietime = now + 0.1
+			end
+		end
+
 		-- pulsing light
 		local dl = DynamicLight(ent:EntIndex())
 		if dl then
@@ -124,6 +220,8 @@ hook.Add("PostDrawTranslucentRenderables", "BrolyFX_Draw", function(depth, skybo
 		local flick = math.Rand(0.9, 1.1)
 		local size = (powered and 230 or 150) * flick
 		render.DrawSprite(ent:WorldSpaceCenter(), size, size * 1.4, Color(KI.r, KI.g, KI.b, powered and 70 or 35))
+
+		if ent:GetNW2Float("BrolyBeamUntil", 0) > CurTime() then DrawBeam(ent) end
 
 		-- lightning bolts
 		render.SetMaterial(MAT_BEAM)

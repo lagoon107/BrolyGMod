@@ -19,7 +19,7 @@ concommand.Add("broly_spawn", function(ply)
 	print("[Broly] spawned", broly, broly:GetModel(), "seq:", broly:GetSequenceName(broly:GetSequence()))
 end)
 
--- broly_ability <leap|slam|barrage|eraser|grab>: every Broly uses that ability next (ignores range/cooldown)
+-- broly_ability <name>: every Broly uses that ability next (ignores range/cooldown/conditions)
 concommand.Add("broly_ability", function(ply, _, args)
 	if IsValid(ply) and not ply:IsAdmin() then return end
 	local name = args[1]
@@ -28,7 +28,61 @@ concommand.Add("broly_ability", function(ply, _, args)
 		broly._brolyForce = name
 		print("[Broly] forcing ability", name, "on", broly)
 	end
-end, function(cmd) return {cmd .. " leap", cmd .. " slam", cmd .. " barrage", cmd .. " eraser", cmd .. " grab"} end)
+end, function(cmd)
+	local out = {}
+	for _, n in ipairs({"leap", "slam", "barrage", "eraser", "mouthblast", "nova", "ambush", "grab"}) do out[#out + 1] = cmd .. " " .. n end
+	return out
+end)
+
+-- broly_targets [class] [count] [distance]: a row of NPCs in front of you for Broly to fight
+-- (pair with ai_ignoreplayers 1 to watch from the side)
+concommand.Add("broly_targets", function(ply, _, args)
+	if IsValid(ply) and not ply:IsAdmin() then return end
+	ply = IsValid(ply) and ply or Entity(1)
+	local class = args[1] or "npc_combine_s"
+	local count = tonumber(args[2]) or 4
+	local dist = tonumber(args[3]) or 900
+	local fwd = ply:GetForward()
+	fwd.z = 0
+	fwd:Normalize()
+	local right = fwd:Cross(Vector(0, 0, 1))
+	for i = 1, count do
+		local npc = ents.Create(class)
+		if not IsValid(npc) then print("[Broly] can't create", class) return end
+		local pos = ply:GetPos() + fwd * dist + right * (i - (count + 1) / 2) * 120
+		local ground = util.TraceLine({start = pos + Vector(0, 0, 300), endpos = pos - Vector(0, 0, 2000), mask = MASK_SOLID,
+			filter = function(e) return not (e:IsNPC() or e:IsPlayer() or e:IsNextBot()) end})
+		npc:SetPos(ground.HitPos + Vector(0, 0, 10))
+		npc:SetAngles(Angle(0, (-fwd):Angle().y, 0))
+		if class == "npc_combine_s" or class == "npc_metropolice" or class == "npc_citizen" then
+			npc:SetKeyValue("additionalequipment", class == "npc_metropolice" and "weapon_pistol" or "weapon_ar2")
+		end
+		npc:Spawn()
+		npc:Activate()
+		undo.Create("Broly target")
+		undo.AddEntity(npc)
+		undo.SetPlayer(ply)
+		undo.Finish()
+	end
+	print("[Broly] spawned", count, class)
+end)
+
+-- broly_info: what each Broly is targeting and how he sees nearby NPCs
+concommand.Add("broly_info", function(ply)
+	if IsValid(ply) and not ply:IsAdmin() then return end
+	for _, b in ipairs(ents.FindByClass("npc_broly")) do
+		print("[Broly] info", b, "enemy", b:GetEnemy(), "omni", b:IsOmniscient(), "hp", b:Health(),
+			"pos", b:GetPos(), "eye", b:EyePos())
+		for _, e in ipairs(ents.FindInSphere(b:GetPos(), 5000)) do
+			if e:IsNPC() or (e:IsNextBot() and e ~= b) then
+				print("   ", e, "rel", b:GetRelationship(e), "dist", math.Round(b:GetPos():Distance(e:GetPos())),
+					"visible", b:Visible(e), "spotted", b.HasSpotted and b:HasSpotted(e), "npc->broly", e.Disposition and e:Disposition(b))
+				local tr = util.TraceLine({start = b:EyePos(), endpos = e:WorldSpaceCenter(), filter = b})
+				print("       pos", e:GetPos(), "trace hit", tr.Entity, tr.HitWorld and "WORLD" or "", "frac", math.Round(tr.Fraction, 2))
+			end
+		end
+	end
+end)
 
 -- broly_hurt [amount]: damages every Broly as if the calling player hit him
 concommand.Add("broly_hurt", function(ply, _, args)

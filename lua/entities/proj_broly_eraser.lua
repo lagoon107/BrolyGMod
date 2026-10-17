@@ -14,7 +14,7 @@ ENT.Speed = 1100
 ENT.Homing = 1.6          -- how hard it steers toward the target (per second)
 ENT.Lifetime = 6
 ENT.BlastRadius = 520
-ENT.BlastDamage = 110
+ENT.BlastDamage = 1500
 ENT.BlastLaunch = 800
 
 local KI = Color(140, 255, 90)

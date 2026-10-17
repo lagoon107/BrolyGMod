@@ -25,7 +25,9 @@ local function AimPos(ent)
 end
 
 local function CanSee(ply, ent)
-	local tr = util.TraceLine({start = ply:EyePos(), endpos = AimPos(ent), filter = {ply, ent}, mask = MASK_SOLID_BRUSHONLY})
+	local tr = util.TraceLine({start = ply:EyePos(), endpos = AimPos(ent), mask = MASK_SOLID, filter = function(e)
+		return not (e == ply or e == ent or e:IsNPC() or e:IsPlayer() or e:IsNextBot())
+	end})
 	return not tr.Hit
 end
 
