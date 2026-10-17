@@ -1,0 +1,6 @@
+{
+	"title": "Broly - Elden Ring Style Boss",
+	"type": "npc",
+	"tags": [ "fun", "roleplay" ],
+	"ignore": [ "*.psd", "*.blend", "*.md", ".git*", "tools/*", "build/*", "models/source/*", "models/textures/*" ]
+}

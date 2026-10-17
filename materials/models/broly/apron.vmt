@@ -1,0 +1,6 @@
+"VertexLitGeneric"
+{
+	"$basetexture" "models/broly/apron"
+	"$halflambert" "1"
+	"$nocull" "1"
+}

@@ -1,0 +1,6 @@
+"VertexLitGeneric"
+{
+	"$basetexture" "models/broly/hair"
+	"$halflambert" "1"
+	"$nocull" "1"
+}

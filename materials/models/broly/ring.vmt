@@ -1,0 +1,5 @@
+"VertexLitGeneric"
+{
+	"$basetexture" "models/broly/ring"
+	"$halflambert" "1"
+}
