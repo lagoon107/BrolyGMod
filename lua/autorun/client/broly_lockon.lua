@@ -1,15 +1,13 @@
--- Lock-on: press D while already holding Shift and standing (nearly) still to lock onto the boss/NPC
--- nearest your crosshair. Your view then tracks its chest; press Shift+D again to release.
--- Sprint-strafing right never toggles it because you're moving when D goes down.
+-- Lock-on: press ; (semicolon) to lock onto the boss/NPC nearest your crosshair. Your view then tracks
+-- its chest; press ; again to release.
 
 local MAX_DIST = 4000
 local CONE = math.cos(math.rad(35))
-local STILL_SPEED = 50
 local LOST_SIGHT_TIME = 2
 local TURN_SPEED = 14 -- higher = snappier tracking
 
 local target, lockAng, lostSince
-local dWasDown, nextToggle = false, 0
+local keyWasDown, nextToggle = false, 0
 
 local function Alive(ent)
 	return IsValid(ent) and (ent:Health() > 0 or ent:GetNW2Int("DrGBaseHealth", 0) > 0)
@@ -56,10 +54,9 @@ hook.Add("Think", "BrolyLockOn_Input", function()
 	local ply = LocalPlayer()
 	if not IsValid(ply) then return end
 
-	local dDown = input.IsKeyDown(KEY_D)
+	local keyDown = input.IsKeyDown(KEY_SEMICOLON)
 	local typing = ply:IsTyping() or gui.IsGameUIVisible() or IsValid(vgui.GetKeyboardFocus())
-	if dDown and not dWasDown and not typing and CurTime() > nextToggle
-		and input.IsKeyDown(KEY_LSHIFT) and ply:GetVelocity():Length2D() < STILL_SPEED then
+	if keyDown and not keyWasDown and not typing and CurTime() > nextToggle then
 		nextToggle = CurTime() + 0.25
 		if target then
 			Release()
@@ -71,7 +68,7 @@ hook.Add("Think", "BrolyLockOn_Input", function()
 			end
 		end
 	end
-	dWasDown = dDown
+	keyWasDown = keyDown
 
 	if not target then return end
 	if not Alive(target) or not ply:Alive() or ply:EyePos():Distance(AimPos(target)) > MAX_DIST then

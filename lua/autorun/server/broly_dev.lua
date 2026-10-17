@@ -99,6 +99,18 @@ concommand.Add("broly_hurt", function(ply, _, args)
 	end
 end)
 
+-- broly_rage <0-1>: sets every Broly's health to that much lost (fires zenkai surges as it would in a fight)
+concommand.Add("broly_rage", function(ply, _, args)
+	if IsValid(ply) and not ply:IsAdmin() then return end
+	local rage = math.Clamp(tonumber(args[1]) or 0.5, 0, 0.99)
+	for _, broly in ipairs(ents.FindByClass("npc_broly")) do
+		broly:SetHealth(math.max(1, math.floor(broly:GetMaxHealth() * (1 - rage))))
+		broly:BrolyRefreshRage()
+		print("[Broly] rage", broly, "hp", broly:Health(), "dealt x" .. math.Round(broly.BaseDamageScale * broly:BrolyScale("dealt"), 2),
+			"taken x" .. math.Round(broly:BrolyScale("taken"), 2))
+	end
+end)
+
 -- Agent bridge (singleplayer only): lines written to data/broly_cmd.txt get run, then the file is cleared.
 -- Lets tests drive the game without keyboard focus. "lua <code>" runs server Lua, "cl <cmd>" runs a
 -- command on the local player's client, anything else is a server console command.

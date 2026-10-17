@@ -13,12 +13,25 @@ ENT.RagdollOnDeath = true
 ENT.IsBrolyBoss = true
 ENT.BossName = "Broly, the Legendary Super Saiyan"
 
--- Stats: a force of nature --
-ENT.SpawnHealth = 40000
+-- Stats: starts beatable, ends a force of nature --
+ENT.SpawnHealth = 15000
 ENT.MinPhysDamage = 99999
 ENT.MinFallDamage = 99999
 ENT.DamageResist = 0.35       -- bullets, melee, everything that isn't explosive
 ENT.BlastResist = 1           -- explosives hurt him the most
+
+-- Zenkai: every hit he takes makes him stronger. Rage = fraction of health lost (never goes back down).
+-- Each stat goes {at full health, near death} along an exponential curve lo * (hi / lo) ^ rage, so it
+-- barely moves early and explodes late.
+ENT.BaseDamageScale = 0.4     -- all damage numbers below are scaled by this times Zenkai.dealt
+ENT.Zenkai = {
+	dealt = {1, 10},          -- damage he deals
+	taken = {1, 0.05},        -- damage he takes (on top of DamageResist/BlastResist)
+	cooldown = {1, 0.25},     -- ability cooldowns
+	speed = {1, 1.6},         -- run speed
+	animrate = {1, 1.4},      -- attack/ability animation speed
+	surges = {0.25, 0.5, 0.75, 0.9} -- rage levels where he roars and erupts with power
+}
 
 -- AI --
 ENT.RangeAttackRange = 3000   -- abilities are picked from OnRangeAttack/OnChaseEnemy
@@ -101,6 +114,11 @@ if SERVER then
 		self._brolyNextStep = 0
 		self._brolyStepFoot = false
 		self._brolyAttackers = {}
+		self._brolyRage = 0
+		self._brolySurges = 0
+		self._brolyRate = 1
+		self._brolyBaseRun, self._brolyBaseRunRate = self.RunSpeed, self.RunAnimRate
+		self:SetNW2Float("BrolyRage", 0)
 		self:CallOnRemove("BrolyReleaseGrab", function(self) self:BrolyGrabRelease(false) end)
 		-- announce himself
 		self:Timer(0.3, function(self)
@@ -143,7 +161,7 @@ if SERVER then
 	function ENT:BrolyGesture(name, rate)
 		local seq = self:LookupSequence(name)
 		if seq < 0 then return 0 end
-		rate = rate or 1
+		rate = (rate or 1) * (self._brolyRate or 1)
 		local layer = self:AddGestureSequence(seq, true)
 		self:SetLayerPlaybackRate(layer, rate)
 		self:SetLayerBlendIn(layer, 0.08)
@@ -155,7 +173,57 @@ if SERVER then
 		self:SetOmniscient(true) -- always knows where you are once the fight starts
 	end
 
-	-- Damage resistance: small arms barely scratch him, explosives are the way.
+	------------------------------------------------------------------ zenkai
+
+	function ENT:BrolyRage()
+		return self._brolyRage or 0
+	end
+
+	-- Current multiplier for one ENT.Zenkai stat.
+	function ENT:BrolyScale(key)
+		local z = self.Zenkai[key]
+		return z[1] * (z[2] / z[1]) ^ self:BrolyRage()
+	end
+
+	-- Scales an ability timing by the animation speed locked in when the move started.
+	function ENT:BrolyT(t)
+		return t / (self._brolyRate or 1)
+	end
+
+	-- Called after he takes damage: raises rage, speeds him up, and fires any surges he's crossed.
+	function ENT:BrolyRefreshRage()
+		local max = self:GetMaxHealth()
+		if max <= 0 then return end
+		local rage = math.Clamp(1 - self:Health() / max, 0, 1)
+		if rage <= self._brolyRage then return end
+		self._brolyRage = rage
+		self:SetNW2Float("BrolyRage", rage)
+		local speed = self:BrolyScale("speed")
+		self.RunSpeed = self._brolyBaseRun * speed
+		self.RunAnimRate = self._brolyBaseRunRate * speed
+		local surges = self.Zenkai.surges
+		while self._brolySurges < #surges and rage >= surges[self._brolySurges + 1] do
+			self._brolySurges = self._brolySurges + 1
+			self:BrolyZenkaiSurge(self._brolySurges)
+		end
+		self:BrolyDebug("zenkai rage", math.Round(rage, 2), "dealt x" .. math.Round(self:BrolyScale("dealt") * self.BaseDamageScale, 2),
+			"taken x" .. math.Round(self:BrolyScale("taken"), 2))
+	end
+
+	-- A zenkai power-up: he roars and a wave of energy erupts from him, bigger at every stage.
+	function ENT:BrolyZenkaiSurge(stage)
+		if self:Health() <= 0 then return end
+		self:BrolyDebug("zenkai surge", stage)
+		self:EmitSound("Broly.Roar")
+		self:BrolyPowerFor(4 + stage)
+		-- mostly knockback: ~40 real damage whatever his multiplier (the EntityTakeDamage hook scales it back up)
+		local damage = 40 / (self.BaseDamageScale * self:BrolyScale("dealt"))
+		self:BrolyShockwave(self:GetPos(), {radius = 300 + 100 * stage, damage = damage, launch = 600 + 100 * stage,
+			power = 1 + 0.3 * stage, dome = 250 + 90 * stage, hitAir = true})
+		BrolyHitStop(0.25, 0.2)
+	end
+
+	-- Damage resistance: small arms barely scratch him, explosives are the way. Zenkai shrinks it all.
 	function ENT:OnTakeDamage(dmg)
 		local attacker = dmg:GetAttacker()
 		self:SpotEntity(attacker)
@@ -165,15 +233,15 @@ if SERVER then
 		if dmg:IsDamageType(DMG_FALL) or dmg:IsDamageType(DMG_CRUSH) or dmg:IsDamageType(DMG_PHYSGUN) then return true end
 		local inflictor = dmg:GetInflictor()
 		if IsValid(inflictor) and inflictor:GetClass():StartWith("prop_physics") then return true end
-		if dmg:IsDamageType(DMG_BLAST) or dmg:IsDamageType(DMG_BLAST_SURFACE) then
-			return dmg:GetDamage() * self.BlastResist
-		end
-		return dmg:GetDamage() * self.DamageResist
+		self:Timer(0, self.BrolyRefreshRage) -- after the damage has been applied
+		local resist = (dmg:IsDamageType(DMG_BLAST) or dmg:IsDamageType(DMG_BLAST_SURFACE)) and self.BlastResist or self.DamageResist
+		return dmg:GetDamage() * resist * self:BrolyScale("taken")
 	end
 
-	-- Coroutine-safe pause. DrGBase's Wait() returns immediately while an enemy exists.
+	-- Coroutine-safe pause (shortened by zenkai animation speed). DrGBase's Wait() returns immediately
+	-- while an enemy exists.
 	function ENT:BrolyPause(duration, face)
-		local stop = CurTime() + duration
+		local stop = CurTime() + self:BrolyT(duration)
 		while CurTime() < stop do
 			if IsValid(face) then self:FaceTowards(face) end
 			self:YieldCoroutine(false)
@@ -209,6 +277,8 @@ if SERVER then
 	-- Plays one entry of ENT.BrolyAttacks. Runs inside DrGBase's AI coroutine.
 	function ENT:BrolyAttack(name)
 		local atk = self.BrolyAttacks[name]
+		self._brolyRate = self:BrolyScale("animrate")
+		local rate = atk.rate * self._brolyRate
 		local hitDone = false
 		if atk.impact >= 2 or math.random() < 0.35 then self:EmitSound("Broly.Grunt") end
 		local function onCycle(self, cycle)
@@ -228,16 +298,16 @@ if SERVER then
 		if atk.gesture then
 			-- upper-body punch layered over the fighting stance; keep turning toward the target
 			local seq = self:LookupSequence(atk.seq)
-			local dur = self:SequenceDuration(seq) / atk.rate
+			local dur = self:SequenceDuration(seq) / rate
 			local start = CurTime()
-			self:PlaySequence(atk.seq, atk.rate)
+			self:PlaySequence(atk.seq, rate)
 			while CurTime() - start < dur * 0.6 do
 				onCycle(self, (CurTime() - start) / dur)
 				if self:HasEnemy() then self:FaceEnemy() end
 				self:YieldCoroutine(false)
 			end
 		else
-			self:PlaySequenceAndMove(atk.seq, atk.rate, function(self, cycle)
+			self:PlaySequenceAndMove(atk.seq, rate, function(self, cycle)
 				if cycle < atk.hit and self:HasEnemy() then self:FaceEnemy() end
 				onCycle(self, cycle)
 			end)
@@ -258,7 +328,8 @@ if SERVER then
 
 	function ENT:BrolyUseAbility(name, enemy)
 		self:BrolyDebug("ability", name, "on", enemy, "dist", math.Round(self:GetPos():Distance(enemy:GetPos())))
-		self._brolyCooldowns[name] = CurTime() + self.BrolyAbilities[name].cooldown
+		self._brolyCooldowns[name] = CurTime() + self.BrolyAbilities[name].cooldown * self:BrolyScale("cooldown")
+		self._brolyRate = self:BrolyScale("animrate") -- locked for the whole move so timings stay in sync
 		self[self.BrolyAbilities[name].fn](self, enemy)
 		self._brolyNextAbility = CurTime() + self.AbilityGap
 		return true
@@ -407,7 +478,7 @@ if SERVER then
 		away.z = 0
 		local target = enemy:GetPos() + away:GetNormalized() * 90
 		self:FaceTowards(enemy)
-		self:PlaySequenceAndWait("jump_land", 1.4) -- quick crouch
+		self:PlaySequenceAndWait("jump_land", 1.4 * self._brolyRate) -- quick crouch
 		if not self:BrolyLeapTo(target, 1.1, enemy) then return end
 		self:BrolyShockwave(self:GetPos(), {radius = 320, damage = 500, launch = 500, power = 0.8, dome = 260})
 		self:BrolyPause(0.2)
@@ -418,11 +489,11 @@ if SERVER then
 		self:FaceTowards(enemy)
 		self:BrolyPowerFor(3)
 		self:EmitSound("Broly.KiCharge")
-		self:PlaySequenceAndWait("jump_land", 0.5) -- slow, readable windup
+		self:PlaySequenceAndWait("jump_land", 0.5 * self._brolyRate) -- slow, readable windup
 		local target = enemy:GetPos() + enemy:GetVelocity() * 0.3
 		if not self:BrolyLeapTo(target, 1.02, enemy) then return end
 		self:BrolyShockwave(self:GetPos(), {radius = 480, damage = 900, launch = 800, power = 1.2, dome = 440})
-		self:PlaySequenceAndWait("jump_land", 0.7) -- recovery crouch
+		self:PlaySequenceAndWait("jump_land", 0.7 * self._brolyRate) -- recovery crouch
 	end
 
 	-- Ki barrage: plants his feet and hoses the player with ki blasts from alternating hands.
@@ -525,7 +596,7 @@ if SERVER then
 		self:EmitSound("Broly.KiCharge")
 		self:BrolyGesture("broly_mouthblast")
 		local start = CurTime()
-		while CurTime() - start < self.BeamStart do
+		while CurTime() - start < self:BrolyT(self.BeamStart) do
 			if IsValid(enemy) then self:FaceTowards(enemy) end
 			self:YieldCoroutine(false)
 		end
@@ -534,9 +605,9 @@ if SERVER then
 		self:EmitSound("Broly.Roar")
 		self:EmitSound("Broly.Blast")
 		local dir = IsValid(enemy) and (enemy:WorldSpaceCenter() - self:BrolyMouthPos()):GetNormalized() or self:GetForward()
-		self:SetNW2Float("BrolyBeamUntil", start + self.BeamEnd)
+		self:SetNW2Float("BrolyBeamUntil", start + self:BrolyT(self.BeamEnd))
 		local nextTick, nextBoom = 0, 0
-		while CurTime() - start < self.BeamEnd do
+		while CurTime() - start < self:BrolyT(self.BeamEnd) do
 			if IsValid(enemy) then
 				self:FaceTowards(enemy)
 				local want = (enemy:WorldSpaceCenter() - self:BrolyMouthPos()):GetNormalized()
@@ -598,14 +669,14 @@ if SERVER then
 		self:EmitSound("Broly.KiCharge")
 		self:BrolyGesture("broly_nova")
 		local start = CurTime()
-		while CurTime() - start < self.NovaSpawnTime do self:YieldCoroutine(false) end
+		while CurTime() - start < self:BrolyT(self.NovaSpawnTime) do self:YieldCoroutine(false) end
 		local nova = ents.Create("broly_nova")
 		if IsValid(nova) then
 			nova:SetOwner(self)
 			nova:SetPos(self:GetPos())
 			nova:Spawn()
 		end
-		while CurTime() - start < 2.6 do self:YieldCoroutine(false) end
+		while CurTime() - start < self:BrolyT(2.6) do self:YieldCoroutine(false) end
 	end
 
 	------------------------------------------------------------------ ambush
@@ -668,7 +739,7 @@ if SERVER then
 		self:BrolyGesture("broly_hammer")
 
 		local start = CurTime()
-		while CurTime() - start < self.AmbushHover do
+		while CurTime() - start < self:BrolyT(self.AmbushHover) do
 			self:SetPos(dest)
 			self.loco:SetVelocity(vector_origin)
 			if IsValid(target) then self:FaceTowards(target) end
@@ -706,7 +777,7 @@ if SERVER then
 		orb:SetPos(self:BrolyHandPos("ValveBiped.Bip01_R_Hand"))
 		orb:Spawn()
 		local start = CurTime()
-		while CurTime() - start < self.EraserReleaseTime do
+		while CurTime() - start < self:BrolyT(self.EraserReleaseTime) do
 			if IsValid(enemy) then self:FaceTowards(enemy) end
 			self:YieldCoroutine(false)
 		end
@@ -844,7 +915,7 @@ if SERVER then
 		local start = CurTime()
 
 		-- reach: lunge in while the hand comes forward
-		while CurTime() - start < self.GrabCloseTime do
+		while CurTime() - start < self:BrolyT(self.GrabCloseTime) do
 			if IsValid(enemy) then
 				self:FaceTowards(enemy)
 				self.loco:Approach(enemy:GetPos(), 1)
@@ -864,7 +935,7 @@ if SERVER then
 		-- catch and hoist overhead
 		self:BrolyGrabStart(enemy)
 		self:EmitSound("Broly.Yell")
-		while CurTime() - start < self.GrabLiftTime and self._brolyGrab do
+		while CurTime() - start < self:BrolyT(self.GrabLiftTime) and self._brolyGrab do
 			self:YieldCoroutine(false)
 		end
 		if not self._brolyGrab then return end
@@ -875,7 +946,7 @@ if SERVER then
 		self:BrolyGesture("broly_strike")
 		local sstart = CurTime()
 		self:BrolyGrabRelease(Vector(0, 0, 220) + fwd * 40)
-		while CurTime() - sstart < self.StrikeHitTime do
+		while CurTime() - sstart < self:BrolyT(self.StrikeHitTime) do
 			self:YieldCoroutine(false)
 		end
 		local alive = IsValid(victim) and (not victim:IsPlayer() or victim:Alive())
@@ -887,6 +958,20 @@ if SERVER then
 		self:BrolyPause(0.66)
 	end
 
+	------------------------------------------------------------------ zenkai: outgoing damage
+
+	-- One choke point for everything he hurts (fists, shockwaves, beams, ki, grab, eraser, nova):
+	-- scale by the base nerf and his current zenkai multiplier.
+	hook.Add("EntityTakeDamage", "BrolyZenkai", function(target, dmg)
+		local broly = dmg:GetAttacker()
+		if not (IsValid(broly) and broly.IsBrolyBoss) then
+			local inflictor = dmg:GetInflictor()
+			broly = IsValid(inflictor) and inflictor:GetOwner()
+			if not (IsValid(broly) and broly.IsBrolyBoss) then return end
+		end
+		if target.IsBrolyBoss or not broly.BrolyScale then return end
+		dmg:ScaleDamage(broly.BaseDamageScale * broly:BrolyScale("dealt"))
+	end)
 end
 
 -- DO NOT TOUCH --

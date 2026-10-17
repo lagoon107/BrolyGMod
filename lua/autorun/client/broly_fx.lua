@@ -111,7 +111,10 @@ hook.Add("Think", "BrolyFX_Aura", function()
 			st = {emitter = ParticleEmitter(ent:GetPos()), nextPuff = 0, arcs = {}}
 			state[ent] = st
 		end
-		local powered = ent:GetNW2Bool("BrolyPowered")
+		-- zenkai rage (0-1) makes everything bigger and wilder; from 75% rage he's always flaring
+		local rage = ent:GetNW2Float("BrolyRage", 0)
+		local powered = ent:GetNW2Bool("BrolyPowered") or rage >= 0.75
+		local boost = 1 + rage * 0.6
 		local now = CurTime()
 		local center = ent:WorldSpaceCenter()
 		local em = st.emitter
@@ -119,16 +122,16 @@ hook.Add("Think", "BrolyFX_Aura", function()
 
 		-- rising aura flames
 		if now > st.nextPuff then
-			st.nextPuff = now + (powered and 0.012 or 0.035)
+			st.nextPuff = now + (powered and 0.012 or 0.035) / boost
 			for i = 1, powered and 3 or 1 do
-				local base = ent:GetPos() + Vector(math.Rand(-22, 22), math.Rand(-22, 22), math.Rand(0, 90))
+				local base = ent:GetPos() + Vector(math.Rand(-22, 22), math.Rand(-22, 22), math.Rand(0, 90)) * (1 + rage * 0.5)
 				local p = em:Add("sprites/light_glow02_add", base)
 				if p then
-					p:SetVelocity(Vector(math.Rand(-15, 15), math.Rand(-15, 15), math.Rand(80, powered and 260 or 150)))
+					p:SetVelocity(Vector(math.Rand(-15, 15), math.Rand(-15, 15), math.Rand(80, powered and 260 or 150) * boost))
 					p:SetDieTime(math.Rand(0.4, 0.8))
 					p:SetStartAlpha(powered and 160 or 90)
 					p:SetEndAlpha(0)
-					p:SetStartSize(math.Rand(10, powered and 34 or 22))
+					p:SetStartSize(math.Rand(10, powered and 34 or 22) * boost)
 					p:SetEndSize(2)
 					p:SetColor(KI.r, KI.g, KI.b)
 					p:SetAirResistance(40)
@@ -154,7 +157,7 @@ hook.Add("Think", "BrolyFX_Aura", function()
 		for i = #st.arcs, 1, -1 do
 			if st.arcs[i].die < now then table.remove(st.arcs, i) end
 		end
-		local chance = powered and 0.6 or 0.12
+		local chance = math.min(1, (powered and 0.6 or 0.12) * (1 + rage))
 		if math.random() < chance then st.arcs[#st.arcs + 1] = NewArc(ent, powered) end
 
 		-- mouth blast: debris and embers boiling off the beam and its impact point
@@ -208,9 +211,9 @@ hook.Add("Think", "BrolyFX_Aura", function()
 		if dl then
 			dl.pos = center
 			dl.r, dl.g, dl.b = KI.r, KI.g, KI.b
-			dl.brightness = (powered and 3 or 1) + math.Rand(0, powered and 2 or 0.6)
+			dl.brightness = (powered and 2 or 1) + math.Rand(0, powered and 1.5 or 0.6) + rage
 			dl.decay = 2000
-			dl.size = powered and 420 or 220
+			dl.size = (powered and 420 or 220) * (1 + rage)
 			dl.dietime = now + 0.1
 		end
 	end
@@ -220,12 +223,13 @@ hook.Add("PostDrawTranslucentRenderables", "BrolyFX_Draw", function(depth, skybo
 	if skybox then return end
 	for ent, st in pairs(state) do
 		if not IsValid(ent) or ent:IsDormant() then continue end
-		local powered = ent:GetNW2Bool("BrolyPowered")
+		local rage = ent:GetNW2Float("BrolyRage", 0)
+		local powered = ent:GetNW2Bool("BrolyPowered") or rage >= 0.75
 
 		-- body glow
 		render.SetMaterial(MAT_GLOW)
 		local flick = math.Rand(0.9, 1.1)
-		local size = (powered and 230 or 150) * flick
+		local size = (powered and 230 or 150) * flick * (1 + rage * 0.5)
 		render.DrawSprite(ent:WorldSpaceCenter(), size, size * 1.4, Color(KI.r, KI.g, KI.b, powered and 70 or 35))
 
 		if ent:GetNW2Float("BrolyBeamUntil", 0) > CurTime() then DrawBeam(ent) end
