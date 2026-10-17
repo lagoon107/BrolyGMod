@@ -99,8 +99,9 @@ concommand.Add("broly_hurt", function(ply, _, args)
 	end
 end)
 
--- Agent bridge (singleplayer only): console lines written to data/broly_cmd.txt get run, then the file is
--- cleared. Lets tests drive the game without needing keyboard focus.
+-- Agent bridge (singleplayer only): lines written to data/broly_cmd.txt get run, then the file is cleared.
+-- Lets tests drive the game without keyboard focus. "lua <code>" runs server Lua, "cl <cmd>" runs a
+-- command on the local player's client, anything else is a server console command.
 if game.SinglePlayer() then
 	timer.Create("BrolyDevBridge", 0.5, 0, function()
 		local txt = file.Read("broly_cmd.txt", "DATA")
@@ -108,7 +109,14 @@ if game.SinglePlayer() then
 		file.Write("broly_cmd.txt", "")
 		for line in txt:gmatch("[^\r\n]+") do
 			print("[Broly] bridge>", line)
-			game.ConsoleCommand(line .. "\n")
+			local code, cl = line:match("^lua (.+)"), line:match("^cl (.+)")
+			if code then
+				RunString(code, "BrolyDevBridge")
+			elseif cl then
+				if IsValid(Entity(1)) then Entity(1):ConCommand(cl) end
+			else
+				game.ConsoleCommand(line .. "\n")
+			end
 		end
 	end)
 end
