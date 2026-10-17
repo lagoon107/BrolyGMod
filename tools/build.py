@@ -35,6 +35,11 @@ $sequence "reference" "anm_reference.smd" fps 1
 $animation "a_proportions" "broly_proportions.smd" subtract "reference" 0
 $sequence "proportions" "a_proportions" delta autoplay
 
+// custom upper-body gestures (tools/anim_broly.py), played as layers over the fighting stance
+{weightlist}
+$sequence "broly_grab" "broly_grab.smd" fps 30 weightlist "broly_upper"
+$sequence "broly_strike" "broly_strike.smd" fps 30 weightlist "broly_upper"
+
 $attachment "eyes" "ValveBiped.Bip01_Head1" {eye_fwd:.2f} {eye_up:.2f} 0 rotate 0 -80 -90
 $attachment "mouth" "ValveBiped.Bip01_Head1" {mouth_fwd:.2f} {mouth_up:.2f} 0 rotate 0 -80 -90
 $attachment "chest" "ValveBiped.Bip01_Spine2" 5 4 0 rotate 0 95 90
@@ -51,6 +56,26 @@ $collisionjoints "broly_phys.smd"
 	$rootbone "ValveBiped.Bip01_Pelvis"
 }}
 '''
+
+
+def upper_weightlist(ref_json):
+    """Every bone listed explicitly: legs/pelvis 0, spine ramps up, arms/head/fingers 1."""
+    import json
+    ramp = {"Pelvis": 0, "Spine": 0.25, "Spine1": 0.5, "Spine2": 0.85}
+    lines = ['$weightlist "broly_upper" {']
+    for b in json.load(open(ref_json)):
+        if b["name"] == "ValveBiped.forward":  # unweighted helper bone; studiomdl drops it
+            continue
+        short = b["name"].replace("ValveBiped.Bip01_", "")
+        if short in ramp:
+            w = ramp[short]
+        elif any(k in short for k in ("Thigh", "Calf", "Foot", "Toe")):
+            w = 0
+        else:
+            w = 1
+        lines.append('\t"%s" %g' % (b["name"], w))
+    lines.append("}")
+    return "\n".join(lines)
 
 
 def run(cmd, **kw):
@@ -92,11 +117,15 @@ def main():
     report = json.load(open(os.path.join(SMD, "build_report.json")))
     print("blender:", {k: report[k] for k in ("scale", "materials_used", "phys_bones")})
 
+    # 3b) custom animations
+    out = run([sys.executable, "-I", os.path.join(HERE, "anim_broly.py"), ref_json, SMD])
+    print(out.strip())
+
     # 4) QC + studiomdl
     head_z = report["head"][2]
     qc = QC.format(eye_z=head_z + 4.0 * report["k_scale"], eye_fwd=3.4 * report["k_scale"],
                    eye_up=-3.9 * report["k_scale"], mouth_fwd=0.8 * report["k_scale"],
-                   mouth_up=-5.6 * report["k_scale"])
+                   mouth_up=-5.6 * report["k_scale"], weightlist=upper_weightlist(ref_json))
     qc_path = os.path.join(SMD, "broly.qc")
     open(qc_path, "w").write(qc)
     out = run([STUDIOMDL, "-nop4", "-game", GAME, qc_path])

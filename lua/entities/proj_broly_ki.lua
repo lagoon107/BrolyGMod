@@ -36,7 +36,7 @@ if SERVER then
 		fx:SetScale(0.8)
 		util.Effect("broly_impact", fx, true, true)
 		util.ScreenShake(self:GetPos(), 4, 30, 0.25, 350)
-		self:EmitSound("weapons/stunstick/stunstick_fleshhit" .. math.random(2) .. ".wav", 75, math.random(90, 110))
+		self:EmitSound("Broly.KiHit")
 
 		if not ent:IsWorld() then self:DealDamage(ent, self.Damage, DMG_SHOCK) end
 		self:RadiusDamage(self.Damage * 0.6, DMG_BLAST, self.BlastRadius, function(e)

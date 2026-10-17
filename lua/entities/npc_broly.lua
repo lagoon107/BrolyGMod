@@ -50,9 +50,9 @@ ENT.RunAnimation = ACT_HL2MP_RUN_FIST
 ENT.RunAnimRate = 1.35
 ENT.JumpAnimation = ACT_HL2MP_JUMP_FIST
 
--- Sounds --
+-- Sounds (lua/autorun/broly_sounds.lua) --
 ENT.OnDamageSounds = {}
-ENT.OnDeathSounds = {}
+ENT.OnDeathSounds = {"Broly.DeathRoar"}
 
 -- Melee attacks --
 -- Each attack: a sequence, its playback rate, when (cycle) the hit lands, and the hit itself.
@@ -93,12 +93,57 @@ if SERVER then
 		self._brolyCombo = 0
 		self._brolyCooldowns = {}
 		self._brolyNextAbility = 0
+		self._brolyPowerUntil = 0
+		self._brolyNextStep = 0
+		self._brolyStepFoot = false
 		self:CallOnRemove("BrolyReleaseGrab", function(self) self:BrolyGrabRelease(false) end)
+		-- announce himself
+		self:Timer(0.3, function(self)
+			self:EmitSound("Broly.Scream")
+			self:BrolyPowerFor(5)
+		end)
+	end
+
+	-- Aura flares up (client effects read NW2Bool "BrolyPowered") for the given time.
+	function ENT:BrolyPowerFor(seconds)
+		self._brolyPowerUntil = math.max(self._brolyPowerUntil, CurTime() + seconds)
 	end
 
 	function ENT:CustomThink()
 		self:BrolyGrabUpdate()
+		local powered = CurTime() < self._brolyPowerUntil
+		if self:GetNW2Bool("BrolyPowered") ~= powered then self:SetNW2Bool("BrolyPowered", powered) end
+		self:BrolyFootsteps()
 		return 0
+	end
+
+	-- Heavy, ground-shaking footsteps while running.
+	function ENT:BrolyFootsteps()
+		if CurTime() < self._brolyNextStep or not self:IsOnGround() then return end
+		local speed = self:GetVelocity():Length2D()
+		if speed < 150 then return end
+		self._brolyNextStep = CurTime() + math.Clamp(110 / speed, 0.22, 0.5)
+		self._brolyStepFoot = not self._brolyStepFoot
+		local foot = self:BrolyHandPos(self._brolyStepFoot and "ValveBiped.Bip01_L_Foot" or "ValveBiped.Bip01_R_Foot")
+		foot.z = self:GetPos().z + 2
+		local fx = EffectData()
+		fx:SetOrigin(foot)
+		fx:SetScale(speed > 300 and 1 or 0.6)
+		util.Effect("broly_stomp", fx, true, true)
+		util.ScreenShake(foot, 3, 25, 0.25, 700)
+		self:EmitSound("physics/concrete/concrete_impact_hard" .. math.random(1, 3) .. ".wav", 75, math.random(55, 70), 0.7)
+	end
+
+	-- Plays one of the model's custom upper-body gestures. Returns its duration.
+	function ENT:BrolyGesture(name, rate)
+		local seq = self:LookupSequence(name)
+		if seq < 0 then return 0 end
+		rate = rate or 1
+		local layer = self:AddGestureSequence(seq, true)
+		self:SetLayerPlaybackRate(layer, rate)
+		self:SetLayerBlendIn(layer, 0.08)
+		self:SetLayerBlendOut(layer, 0.15)
+		return self:SequenceDuration(seq) / rate
 	end
 
 	function ENT:OnNewEnemy()
@@ -156,6 +201,7 @@ if SERVER then
 	function ENT:BrolyAttack(name)
 		local atk = self.BrolyAttacks[name]
 		local hitDone = false
+		if atk.impact >= 2 or math.random() < 0.35 then self:EmitSound("Broly.Grunt") end
 		local function onCycle(self, cycle)
 			if not hitDone and cycle >= atk.hit then
 				hitDone = true
@@ -273,7 +319,9 @@ if SERVER then
 		fx:SetMagnitude(power)
 		util.Effect("broly_shockwave", fx, true, true)
 		util.ScreenShake(pos, 25 * power, 50, 1.2 * power, radius * 3)
-		self:EmitSound("ambient/explosions/explode_" .. math.random(1, 4) .. ".wav", 95, math.random(85, 100))
+		util.ScreenShake(pos, 10 * power, 4, 2 * power, radius * 3) -- slow rolling aftershock
+		BrolyFlash(pos, radius * 2.5, 0.45 * power)
+		self:EmitSound("Broly.Explosion", 100 + 25 * power)
 		self:EmitSound("Physics.ImpactHard", 95, 60)
 
 		for _, ent in ipairs(ents.FindInSphere(pos, radius)) do
@@ -313,7 +361,12 @@ if SERVER then
 	function ENT:BrolyLeapTo(pos, arc, face)
 		local start = self:GetPos()
 		local speed = math.max(700, math.sqrt(1000 * start:Distance(pos)) * arc)
-		self:EmitSound("Weapon_Crowbar.Single", 85, 50)
+		self:EmitSound("Broly.Grunt")
+		util.ScreenShake(start, 8, 30, 0.4, 600)
+		local fx = EffectData()
+		fx:SetOrigin(start)
+		fx:SetScale(1.6)
+		util.Effect("broly_stomp", fx, true, true)
 		self:Leap(pos, speed, function(self)
 			if IsValid(face) then self:FaceTowards(face) end
 		end)
@@ -337,7 +390,8 @@ if SERVER then
 	-- Ground slam: big crouch windup, high leap onto the player, shockwave that launches anything grounded.
 	function ENT:AbilitySlam(enemy)
 		self:FaceTowards(enemy)
-		self:EmitSound("npc/zombie_poison/pz_warn1.wav", 90, 60)
+		self:BrolyPowerFor(3)
+		self:EmitSound("Broly.KiCharge")
 		self:PlaySequenceAndWait("jump_land", 0.5) -- slow, readable windup
 		local target = enemy:GetPos() + enemy:GetVelocity() * 0.3
 		if not self:BrolyLeapTo(target, 1.02, enemy) then return end
@@ -357,10 +411,12 @@ if SERVER then
 		local aim = enemy:WorldSpaceCenter() + enemy:GetVelocity() * (dist / 1600) * 0.6 + VectorRand() * 25
 		local phys = ki:GetPhysicsObject()
 		if IsValid(phys) then phys:SetVelocity((aim - pos):GetNormalized() * 1600) end
-		self:EmitSound("weapons/physcannon/energy_sing_flyby" .. math.random(2) .. ".wav", 80, math.random(130, 150), 0.6)
+		self:EmitSound("Broly.KiShot")
 	end
 
 	function ENT:AbilityBarrage(enemy)
+		self:BrolyPowerFor(3.5)
+		self:EmitSound("Broly.Yell")
 		self:BrolyPause(0.25, enemy)
 		for i = 1, 14 do
 			if not IsValid(enemy) or (enemy:IsPlayer() and not enemy:Alive()) then break end
@@ -372,25 +428,37 @@ if SERVER then
 		self:BrolyPause(0.5)
 	end
 
-	-- Grab & throw: lunges, catches the target by the head, squeezes, then hurls them.
+	-- Grab (the movie scene): he catches the target by the head, hoists them overhead trembling with
+	-- rage, lets go, and smashes them out of the air with a full-power haymaker.
+	ENT.GrabCloseTime = 0.40   -- seconds into "broly_grab" when the hand closes (tools/anim_broly.py GRAB_HIT)
+	ENT.GrabLiftTime = 1.60    -- length of "broly_grab"
+	ENT.StrikeHitTime = 0.34   -- seconds into "broly_strike" when the fist connects (STRIKE_HIT)
+	ENT.HoldDamage = 4         -- per squeeze tick while held
+	ENT.StrikeDamage = 70
+
 	function ENT:BrolyGrabStart(ent)
-		self._brolyGrab = {ent = ent, untilT = CurTime() + 2, nextHurt = CurTime() + 0.3}
+		self._brolyGrab = {ent = ent, untilT = CurTime() + 2.5, nextHurt = CurTime() + 0.3}
 		if ent:IsPlayer() then ent:SetMoveType(MOVETYPE_NONE) end
 		self:EmitSound("Flesh.ImpactHard", 85, 70)
+		util.ScreenShake(ent:GetPos(), 10, 40, 0.4, 400)
 	end
 
-	-- Where a grabbed victim hangs: in front of Broly, clear of both hulls, head at hand height.
+	-- Where a grabbed victim hangs: head in his hand, pushed out in front so the hulls don't overlap.
 	function ENT:BrolyGrabHoldPos(ent, hand)
 		local fwd = self:GetForward()
 		fwd.z = 0
 		fwd:Normalize()
-		local reach = self:OBBMaxs().x + ent:OBBMaxs().x + 8
-		local pos = self:GetPos() + fwd * reach
-		pos.z = hand.z - ent:OBBMaxs().z + 8
+		local origin = self:GetPos()
+		local flat = Vector(hand.x - origin.x, hand.y - origin.y, 0)
+		local reach = self:OBBMaxs().x + ent:OBBMaxs().x + 4
+		local along = flat:Dot(fwd)
+		if along < reach then flat = flat + fwd * (reach - along) end
+		local pos = origin + flat
+		pos.z = hand.z - ent:OBBMaxs().z + 6
 		return pos
 	end
 
-	-- A spot in front of Broly where the victim's hull fits, for the release.
+	-- A spot in front of Broly where the victim's hull fits.
 	function ENT:BrolyClearSpot(ent)
 		local mins, maxs = ent:OBBMins(), ent:OBBMaxs()
 		local fwd = self:GetForward()
@@ -409,7 +477,7 @@ if SERVER then
 		if not g then return end
 		local ent = g.ent
 		if not IsValid(ent) or (ent:IsPlayer() and not ent:Alive()) or CurTime() > g.untilT then
-			self:BrolyGrabRelease(false)
+			self:BrolyGrabRelease()
 			return
 		end
 		local hand = self:BrolyHandPos("ValveBiped.Bip01_R_Hand")
@@ -418,55 +486,112 @@ if SERVER then
 		if CurTime() > g.nextHurt then
 			g.nextHurt = CurTime() + 0.3
 			local dmg = DamageInfo()
-			dmg:SetDamage(6)
+			dmg:SetDamage(self.HoldDamage)
 			dmg:SetAttacker(self)
 			dmg:SetInflictor(self)
 			dmg:SetDamageType(DMG_CLUB)
 			ent:TakeDamageInfo(dmg)
 			if ent:IsPlayer() then ent:ViewPunch(Angle(math.random(-6, 6), math.random(-6, 6), 0)) end
-			util.ScreenShake(hand, 5, 30, 0.3, 300)
+			util.ScreenShake(hand, 6, 30, 0.3, 400)
 		end
 	end
 
-	function ENT:BrolyGrabRelease(throw)
+	-- Lets go. toss = optional velocity given to the victim (the mid-air drop before the strike).
+	function ENT:BrolyGrabRelease(toss)
 		local g = self._brolyGrab
 		if not g then return end
 		self._brolyGrab = nil
 		local ent = g.ent
 		if not IsValid(ent) then return end
 		if ent:IsPlayer() then ent:SetMoveType(MOVETYPE_WALK) end
-		ent:SetPos(self:BrolyClearSpot(ent))
-		if not throw then return end
+		local pos = ent:GetPos()
+		local tr = util.TraceHull({start = pos, endpos = pos, mins = ent:OBBMins(), maxs = ent:OBBMaxs(), filter = {ent}})
+		if tr.Hit then ent:SetPos(self:BrolyClearSpot(ent)) end
+		if toss and (ent:IsPlayer() or ent:IsNPC()) then ent:SetVelocity(toss) end
+	end
 
-		local vel = self:GetForward() * 1400 + Vector(0, 0, 450)
-		if ent:IsPlayer() or ent:IsNPC() then ent:SetVelocity(vel) end
+	-- The haymaker that ends the grab.
+	function ENT:BrolyMegaStrike(victim)
+		local fwd = self:GetForward()
+		local vel = fwd * 1900 + Vector(0, 0, 380)
+		local pos = victim:WorldSpaceCenter()
+		if victim:IsPlayer() then victim:SetLocalVelocity(vector_origin) end
+		if victim:IsPlayer() or victim:IsNPC() then victim:SetVelocity(vel) end
+
 		local dmg = DamageInfo()
-		dmg:SetDamage(40)
+		dmg:SetDamage(self.StrikeDamage)
 		dmg:SetAttacker(self)
 		dmg:SetInflictor(self)
 		dmg:SetDamageType(DMG_CLUB)
-		dmg:SetDamageForce(vel * 60)
-		ent:TakeDamageInfo(dmg)
-		self:BrolyImpact(self.BrolyAttacks.heavy, ent)
+		dmg:SetDamagePosition(pos)
+		dmg:SetDamageForce(vel * 80)
+		victim:TakeDamageInfo(dmg)
+
+		local fx = EffectData()
+		fx:SetOrigin(pos)
+		fx:SetNormal(fwd)
+		fx:SetScale(3.5)
+		util.Effect("broly_impact", fx, true, true)
+		util.ScreenShake(pos, 40, 80, 1.2, 2500)
+		util.ScreenShake(pos, 15, 5, 2.5, 2500)
+		BrolyFlash(pos, 1500, 0.9)
+		BrolyHitStop(0.3, 0.15)
+		self:EmitSound("Broly.Blast")
+		self:EmitSound("Broly.Explosion")
+		self:EmitSound("Physics.ImpactHard", 100, 50)
+		self:EmitSound("Broly.Roar")
 	end
 
 	function ENT:AbilityGrab(enemy)
+		local hand = "ValveBiped.Bip01_R_Hand"
 		self:FaceTowards(enemy)
-		self:AddGestureSequence(self:LookupSequence("range_melee_shove_1hand"), true)
-		self:BrolyPause(0.25, enemy)
+		self:BrolyPowerFor(4)
+		self:EmitSound("Broly.Grunt")
+		self:BrolyGesture("broly_grab")
+		local start = CurTime()
+
+		-- reach: lunge in while the hand comes forward
+		while CurTime() - start < self.GrabCloseTime do
+			if IsValid(enemy) then
+				self:FaceTowards(enemy)
+				self.loco:Approach(enemy:GetPos(), 1)
+			end
+			self:YieldCoroutine(false)
+		end
 		if not IsValid(enemy) then return end
+		local fist = self:BrolyHandPos(hand)
 		local to = enemy:GetPos() - self:GetPos()
-		if to:Length2D() > 130 or self:GetForward():Dot(to:GetNormalized()) < 0.5 then
-			self:BrolyPause(0.4) -- whiffed
+		local caught = enemy:NearestPoint(fist):Distance(fist) < 60
+			or (to:Length2D() < 130 and self:GetForward():Dot(to:GetNormalized()) > 0.5)
+		if not caught then
+			self:BrolyPause(0.6) -- whiffed; the empty-handed lift plays out
 			return
 		end
+
+		-- catch and hoist overhead
 		self:BrolyGrabStart(enemy)
-		self:BrolyPause(1.0)
+		self:EmitSound("Broly.Yell")
+		while CurTime() - start < self.GrabLiftTime and self._brolyGrab do
+			self:YieldCoroutine(false)
+		end
 		if not self._brolyGrab then return end
-		self:AddGestureSequence(self:LookupSequence("gesture_item_throw"), true)
-		self:BrolyPause(0.3)
-		self:BrolyGrabRelease(true)
-		self:BrolyPause(0.5)
+
+		-- let go mid-air, wind up, smash
+		local victim = self._brolyGrab.ent
+		local fwd = self:GetForward()
+		self:BrolyGesture("broly_strike")
+		local sstart = CurTime()
+		self:BrolyGrabRelease(Vector(0, 0, 220) + fwd * 40)
+		while CurTime() - sstart < self.StrikeHitTime do
+			self:YieldCoroutine(false)
+		end
+		local alive = IsValid(victim) and (not victim:IsPlayer() or victim:Alive())
+		if alive and victim:WorldSpaceCenter():Distance(self:BrolyHandPos(hand)) < 170 then
+			self:BrolyMegaStrike(victim)
+		else
+			self:EmitSound("WeaponFrag.Throw", 85, 60)
+		end
+		self:BrolyPause(0.66)
 	end
 
 end

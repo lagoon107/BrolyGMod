@@ -49,6 +49,21 @@ function EFFECT:Init(data)
 				part:SetAirResistance(150)
 			end
 		end
+		-- long light streaks bursting out in every direction
+		for i = 1, math.Round(10 * p) do
+			local part = emitter:Add("effects/spark", self.Pos)
+			if part then
+				part:SetVelocity(VectorRand():GetNormalized() * math.Rand(700, 1300) * p)
+				part:SetDieTime(math.Rand(0.08, 0.16))
+				part:SetStartAlpha(255)
+				part:SetEndAlpha(0)
+				part:SetStartSize(math.Rand(4, 7) * p)
+				part:SetEndSize(0)
+				part:SetStartLength(math.Rand(60, 120) * p)
+				part:SetEndLength(math.Rand(10, 30))
+				part:SetColor(220, 255, 190)
+			end
+		end
 		-- dust puff
 		for i = 1, math.Round(6 * p) do
 			local part = emitter:Add("particle/particle_smokegrenade", self.Pos)
@@ -93,8 +108,12 @@ function EFFECT:Render()
 	render.DrawSprite(self.Pos, (40 + 50 * t) * p, (40 + 50 * t) * p, Color(KI.r, KI.g, KI.b, 255 * fade))
 	render.DrawSprite(self.Pos, 22 * p * fade, 22 * p * fade, Color(255, 255, 255, 255 * fade))
 
-	-- shockwave ring facing back along the punch
+	-- shockwave rings facing back along the punch (a second, faster one on big hits)
 	render.SetMaterial(MAT_RING)
 	local size = (15 + 110 * math.sqrt(t)) * p
 	render.DrawQuadEasy(self.Pos, -self.Dir, size, size, Color(KI.r, KI.g, KI.b, 230 * fade), CurTime() * 90)
+	if p >= 2 then
+		local s2 = (30 + 220 * t) * p
+		render.DrawQuadEasy(self.Pos, -self.Dir, s2, s2, Color(255, 255, 255, 140 * fade), -CurTime() * 140)
+	end
 end
