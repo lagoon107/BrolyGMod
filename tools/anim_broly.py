@@ -195,8 +195,27 @@ FOLLOW = merge(STRIKE,
      "Spine": {"rot": (Z, 45)}})
 
 
-GRAB_HIT = 0.40      # seconds into broly_grab when the hand closes
-STRIKE_HIT = 0.34    # seconds into broly_strike when the fist connects
+# Eraser Cannon: right arm drawn back low with the ball cupped in the palm, left hand aiming
+CHARGE = merge(GUARD,
+    {"R_UpperArm": {"aim": [-0.35, 0.55, -0.75]}, "R_Forearm": {"aim": [-0.15, -0.85, 0.10]},
+     "L_UpperArm": {"aim": [0.25, -0.85, -0.20]}, "L_Forearm": {"aim": [0.05, -0.95, 0.20]},
+     "Spine": {"rot": (Z, -25)}, "Spine2": {"rot": (X, -5)}},
+    fingers("R", -20, -10), fingers("L", -10, 0))
+
+THROW = merge(CHARGE,
+    {"R_UpperArm": {"aim": [-0.05, -0.97, 0.20]}, "R_Forearm": {"aim": [0.00, -0.99, 0.10]},
+     "L_UpperArm": {"aim": [0.35, 0.30, -0.85]}, "L_Forearm": {"aim": [0.10, -0.50, 0.85]},
+     "Spine": {"rot": (Z, 25)}, "Spine2": {"rot": (X, 10)}},
+    fingers("R", -5, 0))
+
+THROW_FOLLOW = merge(THROW,
+    {"R_UpperArm": {"aim": [0.25, -0.95, 0.10]}, "R_Forearm": {"aim": [0.35, -0.93, 0.05]},
+     "Spine": {"rot": (Z, 35)}})
+
+
+GRAB_HIT = 0.40       # seconds into broly_grab when the hand closes
+STRIKE_HIT = 0.34     # seconds into broly_strike when the fist connects
+ERASER_RELEASE = 1.17 # seconds into broly_eraser when the ball leaves the hand
 
 
 def main():
@@ -216,7 +235,18 @@ def main():
     strike = render(skel, [(0.0, OVERHEAD), (0.06, RELEASE), (0.24, WINDUP), (STRIKE_HIT, STRIKE),
                            (0.55, FOLLOW), (1.0, GUARD)], 1.0)
     skel.write(os.path.join(out, "broly_strike.smd"), strike)
-    print("ANIMS OK", len(grab), len(strike))
+
+    def charge_shake(t):  # straining as the ball grows
+        if not 0.25 < t < 1.1:
+            return {}
+        a = min(1.0, (t - 0.25) / 0.3)
+        return {"Spine2": {"rot": (X, a * 2.0 * math.sin(t * 60))},
+                "Spine": {"rot": (Z, a * 2.5 * math.sin(t * 47 + 0.7))}}
+
+    eraser = render(skel, [(0.0, GUARD), (0.25, CHARGE), (1.1, CHARGE), (ERASER_RELEASE + 0.03, THROW),
+                           (1.4, THROW_FOLLOW), (1.8, GUARD)], 1.8, charge_shake)
+    skel.write(os.path.join(out, "broly_eraser.smd"), eraser)
+    print("ANIMS OK", len(grab), len(strike), len(eraser))
 
 
 if __name__ == "__main__":

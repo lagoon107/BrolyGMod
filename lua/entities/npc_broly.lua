@@ -78,10 +78,11 @@ ENT.BrolyAttacks = {
 -- Abilities --
 -- cooldown (s), distance window to the enemy, weight for the random pick
 ENT.BrolyAbilities = {
-	leap    = {cooldown = 3.5, min = 1100, max = 4500, weight = 6},
-	slam    = {cooldown = 8,   min = 250,  max = 900,  weight = 4},
-	barrage = {cooldown = 11,  min = 500,  max = 2800, weight = 3},
-	grab    = {cooldown = 12,  min = 0,    max = 110,  weight = 0}, -- picked from melee, see OnMeleeAttack
+	leap    = {fn = "AbilityLeap",    cooldown = 3.5, min = 1100, max = 4500, weight = 6},
+	slam    = {fn = "AbilitySlam",    cooldown = 8,   min = 250,  max = 900,  weight = 4},
+	barrage = {fn = "AbilityBarrage", cooldown = 11,  min = 500,  max = 2800, weight = 3},
+	eraser  = {fn = "AbilityEraser",  cooldown = 14,  min = 450,  max = 3500, weight = 4},
+	grab    = {fn = "AbilityGrab",    cooldown = 12,  min = 0,    max = 110,  weight = 0}, -- picked from melee, see OnMeleeAttack
 }
 ENT.GrabChance = 0.4
 ENT.AbilityGap = 1.0 -- minimum seconds between any two abilities
@@ -244,7 +245,7 @@ if SERVER then
 
 	function ENT:BrolyUseAbility(name, enemy)
 		self._brolyCooldowns[name] = CurTime() + self.BrolyAbilities[name].cooldown
-		self[({leap = "AbilityLeap", slam = "AbilitySlam", barrage = "AbilityBarrage", grab = "AbilityGrab"})[name]](self, enemy)
+		self[self.BrolyAbilities[name].fn](self, enemy)
 		self._brolyNextAbility = CurTime() + self.AbilityGap
 		return true
 	end
@@ -311,16 +312,26 @@ if SERVER then
 
 	------------------------------------------------------------------ shared ability helpers
 
-	-- Damages and launches everything grounded within radius. Jumping dodges it.
-	function ENT:BrolyShockwave(pos, radius, damage, launch, power)
+	-- Damages and launches everything within radius.
+	-- opts: radius, damage, launch, power (VFX/shake scale), dome (energy dome radius, optional),
+	--       hitAir (also hits airborne targets; ground shockwaves can be jumped over)
+	function ENT:BrolyShockwave(pos, opts)
+		local radius, damage, launch, power = opts.radius, opts.damage, opts.launch, opts.power or 1
 		local fx = EffectData()
 		fx:SetOrigin(pos)
 		fx:SetScale(radius)
 		fx:SetMagnitude(power)
 		util.Effect("broly_shockwave", fx, true, true)
+		if opts.dome then
+			local dome = EffectData()
+			dome:SetOrigin(pos)
+			dome:SetScale(opts.dome)
+			dome:SetMagnitude(power)
+			util.Effect("broly_dome", dome, true, true)
+		end
 		util.ScreenShake(pos, 25 * power, 50, 1.2 * power, radius * 3)
 		util.ScreenShake(pos, 10 * power, 4, 2 * power, radius * 3) -- slow rolling aftershock
-		BrolyFlash(pos, radius * 2.5, 0.45 * power)
+		BrolyFlash(pos, radius * 2.5, (opts.dome and 0.7 or 0.45) * power)
 		self:EmitSound("Broly.Explosion", 100 + 25 * power)
 		self:EmitSound("Physics.ImpactHard", 95, 60)
 
@@ -329,7 +340,7 @@ if SERVER then
 			local isChar = ent:IsPlayer() or ent:IsNPC() or ent:IsNextBot()
 			local phys = ent:GetPhysicsObject()
 			if not isChar and not (IsValid(phys) and ent:GetMoveType() == MOVETYPE_VPHYSICS) then continue end
-			if isChar and (not ent:IsOnGround() or (ent:IsPlayer() and not ent:Alive())) then continue end
+			if isChar and ((not opts.hitAir and not ent:IsOnGround()) or (ent:IsPlayer() and not ent:Alive())) then continue end
 
 			local flat = ent:GetPos() - pos
 			flat.z = 0
@@ -383,7 +394,7 @@ if SERVER then
 		self:FaceTowards(enemy)
 		self:PlaySequenceAndWait("jump_land", 1.4) -- quick crouch
 		if not self:BrolyLeapTo(target, 1.1, enemy) then return end
-		self:BrolyShockwave(self:GetPos(), 220, 15, 300, 0.5)
+		self:BrolyShockwave(self:GetPos(), {radius = 320, damage = 25, launch = 450, power = 0.8, dome = 260})
 		self:BrolyPause(0.2)
 	end
 
@@ -395,7 +406,7 @@ if SERVER then
 		self:PlaySequenceAndWait("jump_land", 0.5) -- slow, readable windup
 		local target = enemy:GetPos() + enemy:GetVelocity() * 0.3
 		if not self:BrolyLeapTo(target, 1.02, enemy) then return end
-		self:BrolyShockwave(self:GetPos(), 450, 65, 650, 1)
+		self:BrolyShockwave(self:GetPos(), {radius = 480, damage = 65, launch = 700, power = 1.2, dome = 440})
 		self:PlaySequenceAndWait("jump_land", 0.7) -- recovery crouch
 	end
 
@@ -426,6 +437,35 @@ if SERVER then
 			self:BrolyPause(0.12, enemy)
 		end
 		self:BrolyPause(0.5)
+	end
+
+	-- Eraser Cannon: charges a green ki ball in his palm, trembling, then hurls it. It homes in a little
+	-- and detonates in a huge energy dome that also catches airborne targets.
+	ENT.EraserReleaseTime = 1.17 -- seconds into "broly_eraser" when the ball leaves his hand (ERASER_RELEASE)
+
+	function ENT:AbilityEraser(enemy)
+		self:BrolyPowerFor(2.5)
+		self:EmitSound("Broly.KiCharge")
+		self:BrolyGesture("broly_eraser")
+		local orb = ents.Create("proj_broly_eraser")
+		if not IsValid(orb) then return end
+		orb:SetOwner(self)
+		orb:SetPos(self:BrolyHandPos("ValveBiped.Bip01_R_Hand"))
+		orb:Spawn()
+		local start = CurTime()
+		while CurTime() - start < self.EraserReleaseTime do
+			if IsValid(enemy) then self:FaceTowards(enemy) end
+			self:YieldCoroutine(false)
+		end
+		if not IsValid(orb) then return end
+		if not IsValid(enemy) then orb:Remove() return end
+		local dist = orb:GetPos():Distance(enemy:WorldSpaceCenter())
+		local aim = enemy:WorldSpaceCenter() + enemy:GetVelocity() * (dist / orb.Speed) * 0.7
+		orb:Launch(aim - orb:GetPos(), enemy)
+		self:EmitSound("Broly.Yell")
+		self:EmitSound("Broly.Blast")
+		util.ScreenShake(orb:GetPos(), 12, 40, 0.5, 900)
+		self:BrolyPause(0.6)
 	end
 
 	-- Grab (the movie scene): he catches the target by the head, hoists them overhead trembling with

@@ -39,6 +39,7 @@ $sequence "proportions" "a_proportions" delta autoplay
 {weightlist}
 $sequence "broly_grab" "broly_grab.smd" fps 30 weightlist "broly_upper"
 $sequence "broly_strike" "broly_strike.smd" fps 30 weightlist "broly_upper"
+$sequence "broly_eraser" "broly_eraser.smd" fps 30 weightlist "broly_upper"
 
 $attachment "eyes" "ValveBiped.Bip01_Head1" {eye_fwd:.2f} {eye_up:.2f} 0 rotate 0 -80 -90
 $attachment "mouth" "ValveBiped.Bip01_Head1" {mouth_fwd:.2f} {mouth_up:.2f} 0 rotate 0 -80 -90
