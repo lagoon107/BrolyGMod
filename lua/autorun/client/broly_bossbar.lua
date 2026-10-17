@@ -37,7 +37,7 @@ local function Engage(ent)
 	end
 	local frac, hp = GetHealthFrac(ent)
 	bosses[ent] = {
-		name = ent.BossName or ent.PrintName or "Boss",
+		ent = ent, name = ent.BossName or ent.PrintName or "Boss",
 		frac = frac, trail = frac, lastHp = hp, trailHold = 0,
 		damage = 0, damageTime = 0, alpha = 0, dying = false, order = CurTime()
 	}
@@ -93,14 +93,31 @@ local COL_HP = Color(140, 18, 16)
 local COL_HP_HI = Color(185, 40, 30)
 local COL_TRAIL = Color(205, 170, 70)
 local COL_TEXT = Color(235, 228, 210)
+local COL_DOOM = Color(120, 30, 200)
+local COL_DOOM_HI = Color(200, 120, 255)
+local DOOM_DURATION = 12 -- matches ENT.Doomsday.duration
+
+-- seconds of doomsday left, or nil
+local function DoomLeft(st)
+	local ent = st.ent
+	if not IsValid(ent) then return end
+	local left = ent:GetNW2Float("BrolyDoomUntil", 0) - CurTime()
+	return left > 0 and left or nil
+end
 
 local function DrawBar(st, x, y, w, h)
 	local a = st.alpha * 255
 	local function c(col, mul) return Color(col.r, col.g, col.b, a * (mul or 1)) end
 
-	-- name + damage counter
-	draw.SimpleText(st.name, "EldenBossName", x + 2, y - 4, c(COL_TEXT), TEXT_ALIGN_LEFT, TEXT_ALIGN_BOTTOM)
-	if st.damage > 0 and CurTime() - st.damageTime < DAMAGE_NUMBER_TIME then
+	local doom = DoomLeft(st)
+
+	-- name + damage counter (doomsday: a purple countdown instead)
+	local flicker = doom and (0.7 + 0.3 * math.sin(CurTime() * 12)) or 1
+	draw.SimpleText(doom and st.name .. "  -  DOOMSDAY" or st.name, "EldenBossName", x + 2, y - 4,
+		doom and c(COL_DOOM_HI, flicker) or c(COL_TEXT), TEXT_ALIGN_LEFT, TEXT_ALIGN_BOTTOM)
+	if doom then
+		draw.SimpleText(string.format("%.1f", doom), "EldenBossDamage", x + w - 2, y - 4, c(COL_DOOM_HI), TEXT_ALIGN_RIGHT, TEXT_ALIGN_BOTTOM)
+	elseif st.damage > 0 and CurTime() - st.damageTime < DAMAGE_NUMBER_TIME then
 		local fade = math.Clamp((DAMAGE_NUMBER_TIME - (CurTime() - st.damageTime)) / 0.5, 0, 1)
 		draw.SimpleText(tostring(st.damage), "EldenBossDamage", x + w - 2, y - 4, c(COL_TEXT, fade), TEXT_ALIGN_RIGHT, TEXT_ALIGN_BOTTOM)
 	end
@@ -112,6 +129,15 @@ local function DrawBar(st, x, y, w, h)
 	surface.DrawOutlinedRect(x - 2, y - 2, w + 4, h + 4, 1)
 	surface.SetDrawColor(c(COL_BACK))
 	surface.DrawRect(x, y, w, h)
+
+	if doom then -- the bar becomes his remaining time, draining in purple
+		local dw = math.Round(w * doom / DOOM_DURATION)
+		surface.SetDrawColor(c(COL_DOOM))
+		surface.DrawRect(x, y, dw, h)
+		surface.SetDrawColor(c(COL_DOOM_HI, 0.7 * flicker))
+		surface.DrawRect(x, y, dw, math.max(1, math.floor(h * 0.3)))
+		return
+	end
 
 	-- yellow damage chunk, then red health on top
 	surface.SetDrawColor(c(COL_TRAIL))

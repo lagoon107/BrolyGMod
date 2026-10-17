@@ -1,13 +1,38 @@
 -- Broly's client-side power effects: burning green aura, crackling lightning, pulsing light,
 -- and screen flashes. Everything gets wilder while he's using an ability (NW2Bool "BrolyPowered").
 
-local KI = Color(140, 255, 90)
-local KI_HOT = Color(210, 255, 170)
+local GREEN, GREEN_HOT = Color(140, 255, 90), Color(210, 255, 170)
+local DOOM, DOOM_HOT = Color(160, 50, 255), Color(225, 170, 255)
+local KI, KI_HOT = GREEN, GREEN_HOT -- current palette, switched per Broly (purple during doomsday)
 local MAT_GLOW = Material("sprites/light_glow02_add")
 local MAT_BEAM = Material("trails/electric")
 local MAT_LASER = Material("trails/laser")
 local MAT_RING = Material("effects/select_ring")
 local AURA_DIST = 4000
+
+-- doomsday armor: a crawling energy skin drawn over his model
+local MAT_ARMOR = CreateMaterial("broly_doom_armor", "UnlitGeneric", {
+	["$basetexture"] = "models/effects/comball_tape",
+	["$additive"] = 1,
+	["$model"] = 1,
+	["Proxies"] = {["TextureScroll"] = {
+		["texturescrollvar"] = "$basetexturetransform", ["texturescrollrate"] = 2.2, ["texturescrollangle"] = 90
+	}},
+})
+
+local MAT_COAT = CreateMaterial("broly_doom_coat", "UnlitGeneric", {
+	["$basetexture"] = "vgui/white",
+	["$additive"] = 1,
+	["$model"] = 1,
+})
+
+local function IsDoomed(ent)
+	return ent:GetNW2Float("BrolyDoomUntil", 0) > CurTime()
+end
+
+local function UsePalette(ent)
+	if IsDoomed(ent) then KI, KI_HOT = DOOM, DOOM_HOT else KI, KI_HOT = GREEN, GREEN_HOT end
+end
 
 local state = {} -- [ent] = {emitter, nextPuff, arcs = {}}
 
@@ -112,9 +137,11 @@ hook.Add("Think", "BrolyFX_Aura", function()
 			state[ent] = st
 		end
 		-- zenkai rage (0-1) makes everything bigger and wilder; from 75% rage he's always flaring
+		UsePalette(ent)
+		local doomed = IsDoomed(ent)
 		local rage = ent:GetNW2Float("BrolyRage", 0)
 		local powered = ent:GetNW2Bool("BrolyPowered") or rage >= 0.75
-		local boost = 1 + rage * 0.6
+		local boost = 1 + rage * 0.6 + (doomed and 0.6 or 0)
 		local now = CurTime()
 		local center = ent:WorldSpaceCenter()
 		local em = st.emitter
@@ -223,8 +250,23 @@ hook.Add("PostDrawTranslucentRenderables", "BrolyFX_Draw", function(depth, skybo
 	if skybox then return end
 	for ent, st in pairs(state) do
 		if not IsValid(ent) or ent:IsDormant() then continue end
+		UsePalette(ent)
 		local rage = ent:GetNW2Float("BrolyRage", 0)
 		local powered = ent:GetNW2Bool("BrolyPowered") or rage >= 0.75
+
+		-- doomsday: purple armor coating his whole body, pulsing
+		if IsDoomed(ent) then
+			local pulse = 0.75 + 0.25 * math.sin(CurTime() * 14)
+			render.MaterialOverride(MAT_COAT) -- solid purple sheen
+			render.SetColorModulation(0.45 * pulse, 0.1 * pulse, 0.8 * pulse)
+			ent:DrawModel()
+			render.MaterialOverride(MAT_ARMOR) -- crawling energy on top
+			render.SetColorModulation(DOOM.r / 255 * pulse * 1.6, DOOM.g / 255 * pulse * 1.6, DOOM.b / 255 * pulse * 1.6)
+			ent:DrawModel()
+			ent:DrawModel() -- twice for a denser shell
+			render.SetColorModulation(1, 1, 1)
+			render.MaterialOverride(nil)
+		end
 
 		-- body glow
 		render.SetMaterial(MAT_GLOW)

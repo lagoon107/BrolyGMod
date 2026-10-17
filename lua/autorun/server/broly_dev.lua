@@ -111,6 +111,14 @@ concommand.Add("broly_rage", function(ply, _, args)
 	end
 end)
 
+-- broly_doom: sends every Broly straight into doomsday
+concommand.Add("broly_doom", function(ply)
+	if IsValid(ply) and not ply:IsAdmin() then return end
+	for _, broly in ipairs(ents.FindByClass("npc_broly")) do
+		if not broly:BrolyIsDoomed() then broly:BrolyDoomsday() end
+	end
+end)
+
 -- Agent bridge (singleplayer only): lines written to data/broly_cmd.txt get run, then the file is cleared.
 -- Lets tests drive the game without keyboard focus. "lua <code>" runs server Lua, "cl <cmd>" runs a
 -- command on the local player's client, anything else is a server console command.

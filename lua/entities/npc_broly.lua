@@ -33,6 +33,14 @@ ENT.Zenkai = {
 	surges = {0.25, 0.5, 0.75, 0.9} -- rage levels where he roars and erupts with power
 }
 
+-- Doomsday: the blow that should kill him instead sends him berserk. Purple armor, invincible, every
+-- zenkai stat multiplied again, for exactly Duration seconds, and then he falls.
+ENT.Doomsday = {
+	duration = 12,
+	dealt = 2, cooldown = 0.5,
+	speed = 1.5, animrate = 1.3 -- (doubling these breaks his animations and pathing)
+}
+
 -- AI --
 ENT.RangeAttackRange = 3000   -- abilities are picked from OnRangeAttack/OnChaseEnemy
 ENT.MeleeAttackRange = 80
@@ -182,7 +190,48 @@ if SERVER then
 	-- Current multiplier for one ENT.Zenkai stat.
 	function ENT:BrolyScale(key)
 		local z = self.Zenkai[key]
-		return z[1] * (z[2] / z[1]) ^ self:BrolyRage()
+		local scale = z[1] * (z[2] / z[1]) ^ self:BrolyRage()
+		if self:BrolyIsDoomed() then scale = scale * (self.Doomsday[key] or 1) end
+		return scale
+	end
+
+	function ENT:BrolyIsDoomed()
+		return self._brolyDoomUntil ~= nil
+	end
+
+	function ENT:BrolyApplySpeed()
+		local speed = self:BrolyScale("speed")
+		self.RunSpeed = self._brolyBaseRun * speed
+		self.RunAnimRate = self._brolyBaseRunRate * speed
+	end
+
+	-- The killing blow lands... and he refuses to fall.
+	function ENT:BrolyDoomsday()
+		local d = self.Doomsday
+		self._brolyDoomUntil = CurTime() + d.duration
+		self._brolyRage = 1
+		self:SetHealth(1)
+		self:SetNW2Float("BrolyRage", 1)
+		self:SetNW2Float("BrolyDoomUntil", self._brolyDoomUntil)
+		self._brolyCooldowns = {} -- everything is ready again
+		self:BrolyApplySpeed()
+		self:BrolyDebug("DOOMSDAY for", d.duration, "s")
+
+		self:EmitSound("Broly.Scream")
+		self:EmitSound("Broly.Explosion", 140, 70)
+		self:BrolyPowerFor(d.duration)
+		local damage = 60 / (self.BaseDamageScale * self:BrolyScale("dealt")) -- a blast of force, not a nuke
+		self:BrolyShockwave(self:GetPos(), {radius = 900, damage = damage, launch = 1400, power = 2.2, dome = 800, hitAir = true})
+		BrolyFlash(self:GetPos(), 4000, 1, Color(170, 60, 255))
+		BrolyHitStop(0.5, 0.15)
+		util.ScreenShake(self:GetPos(), 30, 20, d.duration, 3000) -- the ground trembles the whole time
+
+		self:Timer(d.duration, function(self)
+			self:SetNW2Float("BrolyDoomUntil", 0)
+			self:EmitSound("Broly.Explosion", 120, 60)
+			BrolyFlash(self:GetPos(), 3000, 0.8, Color(170, 60, 255))
+			self:Kill(self._brolyLastAttacker, self._brolyLastAttacker)
+		end)
 	end
 
 	-- Scales an ability timing by the animation speed locked in when the move started.
@@ -198,9 +247,7 @@ if SERVER then
 		if rage <= self._brolyRage then return end
 		self._brolyRage = rage
 		self:SetNW2Float("BrolyRage", rage)
-		local speed = self:BrolyScale("speed")
-		self.RunSpeed = self._brolyBaseRun * speed
-		self.RunAnimRate = self._brolyBaseRunRate * speed
+		self:BrolyApplySpeed()
 		local surges = self.Zenkai.surges
 		while self._brolySurges < #surges and rage >= surges[self._brolySurges + 1] do
 			self._brolySurges = self._brolySurges + 1
@@ -233,9 +280,16 @@ if SERVER then
 		if dmg:IsDamageType(DMG_FALL) or dmg:IsDamageType(DMG_CRUSH) or dmg:IsDamageType(DMG_PHYSGUN) then return true end
 		local inflictor = dmg:GetInflictor()
 		if IsValid(inflictor) and inflictor:GetClass():StartWith("prop_physics") then return true end
-		self:Timer(0, self.BrolyRefreshRage) -- after the damage has been applied
+		if IsValid(attacker) and attacker ~= self then self._brolyLastAttacker = attacker end
+		if self:BrolyIsDoomed() then return true end -- berserk: nothing touches him
 		local resist = (dmg:IsDamageType(DMG_BLAST) or dmg:IsDamageType(DMG_BLAST_SURFACE)) and self.BlastResist or self.DamageResist
-		return dmg:GetDamage() * resist * self:BrolyScale("taken")
+		local damage = dmg:GetDamage() * resist * self:BrolyScale("taken")
+		if damage >= self:Health() then
+			self:BrolyDoomsday()
+			return true
+		end
+		self:Timer(0, self.BrolyRefreshRage) -- after the damage has been applied
+		return damage
 	end
 
 	-- Coroutine-safe pause (shortened by zenkai animation speed). DrGBase's Wait() returns immediately
