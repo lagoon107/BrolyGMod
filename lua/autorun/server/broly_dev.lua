@@ -98,3 +98,17 @@ concommand.Add("broly_hurt", function(ply, _, args)
 		print("[Broly] hurt", broly, "hp:", broly:Health())
 	end
 end)
+
+-- Agent bridge (singleplayer only): console lines written to data/broly_cmd.txt get run, then the file is
+-- cleared. Lets tests drive the game without needing keyboard focus.
+if game.SinglePlayer() then
+	timer.Create("BrolyDevBridge", 0.5, 0, function()
+		local txt = file.Read("broly_cmd.txt", "DATA")
+		if not txt or txt == "" then return end
+		file.Write("broly_cmd.txt", "")
+		for line in txt:gmatch("[^\r\n]+") do
+			print("[Broly] bridge>", line)
+			game.ConsoleCommand(line .. "\n")
+		end
+	end)
+end
