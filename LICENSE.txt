@@ -1,0 +1,38 @@
+Copyright (c) 2026 lagoon107
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this mod and associated files (the "Software"), to use, study, and modify
+the Software, and to distribute modified versions of it, subject to the
+following conditions:
+
+1. No Unmodified Redistribution. You may not redistribute, re-upload, or
+   publish the Software, or any substantial portion of it, in unmodified or
+   trivially modified form. Trivial modifications include, but are not limited
+   to: renaming, changing metadata, re-packaging, changing only textures or
+   strings, or similarly minor edits.
+
+2. Substantial Modification Required. You may distribute a modified version
+   only if it contains substantial original changes to functionality, content,
+   or code, such that it is a meaningfully distinct work.
+
+3. Attribution. Any distributed modified version must credit the original
+   author and include a link to the original Software where reasonably
+   possible.
+
+4. No Misrepresentation. You may not claim the original Software, or your
+   modified version as a whole, as entirely your own work, and you may not
+   present a modified version as the original or as officially endorsed by
+   the original author.
+
+5. License Notice. This copyright notice and these conditions must be
+   included in all distributed modified versions.
+
+Linking to the original download page is always permitted.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
